@@ -2,7 +2,7 @@
 
 这个版本由两个部分组成：
 
-1. Shadowrocket 脚本读取小红书 Feed，只提取标题、分类、内容类型和广告标记；作者昵称不会上传，也不参与判断。
+1. Shadowrocket 脚本读取小红书 Feed，只提取接口实际返回的标题、正文、分类、内容类型和广告标记；作者昵称不会上传，也不参与判断。
 2. Cloudflare Worker 保存 TypeSafe API Key，调用 Jev 并返回结构化的 `keep/drop` 结果。
 
 默认采用 `observe` 模式：不删除帖子，只把作者昵称临时改为 `[✅保留] 原昵称` 或 `[❌移除] 原昵称`。观察结果满意以后，才将 Module 中的 `mode=observe` 改为 `mode=filter`。
@@ -87,7 +87,9 @@ npx wrangler secret put FILTER_POLICY_JSON --config worker/wrangler.jsonc < work
 
 `policy.local.json` 已被 `.gitignore` 排除，不会被提交。修改策略后重新执行上面的命令即可，不需要重新发布 Shadowrocket 脚本。
 
-当前默认策略偏严格：直播卡片和显式广告固定过滤；普通帖子只看标题、分类和内容类型，不参考作者身份。明确营销概率达到 `0.75`、低质量概率达到 `0.8`，或同时满足相关性不高于 `0.5`、低质量概率至少 `0.6`、相关性判断置信度至少 `0.35` 时，会标记为过滤。Jev 无法查看 Feed 里的封面与视频，因此判断的是标题所展示出来的内容价值。
+当前默认策略偏严格：直播卡片和显式广告固定过滤；普通帖子综合判断标题、Feed 返回的正文、分类和内容类型，不参考作者身份。明确营销概率达到 `0.75`、低质量概率达到 `0.8`，或同时满足内容价值不高于 `0.5`、低质量概率至少 `0.6`、内容价值判断置信度至少 `0.35` 时，会标记为过滤。只有标题和正文同时为空时才直接标记为无内容；标题为空但正文存在时仍由 Jev 判断。
+
+Jev 无法查看 Feed 里的封面与视频。部分小红书首页 Feed 响应并不下发帖子正文（示例响应中的 `desc` 就全部为空），此时本次判断仍只能使用标题；脚本不会为了补正文而逐帖调用详情接口。
 
 ## 4. 配置 Shadowrocket Module
 
@@ -153,10 +155,12 @@ CLIENT_TOKEN_VALUE='<你的 CLIENT_TOKEN>'
 curl "$FILTER_URL" \
   -H "Authorization: Bearer $CLIENT_TOKEN_VALUE" \
   -H 'Content-Type: application/json' \
-  --data '{"items":[{"key":"0","title":"在飞书里用豆包工作的几个实用方法","category":"科技","contentType":"normal","isAds":false}]}'
+  --data '{"items":[{"key":"0","title":"在飞书里用豆包工作的几个实用方法","content":"正文介绍三个可以直接复用的工作流及其适用场景。","category":"科技","contentType":"normal","isAds":false}]}'
 ```
 
 响应中的 `decisions[0].action` 应为 `keep` 或 `drop`，并包含各项概率、原因代码、模型版本和 token 用量。
+
+当前实现遵循 TypeSafe 的 System One 方式：把帖子字段组织为结构化 `state`，用独立的 `Score` 判断内容价值，用多个 `Noul` 分别判断低质量、营销和可选的屏蔽主题，再由 Worker 中的确定性阈值组合最终结果。所有问题在一次请求中并行计算。模型固定为 `jev-1.13.0`，避免模型别名升级后让已经调好的阈值无提示漂移。
 
 ## 7. 本地验证
 
@@ -170,6 +174,7 @@ npm run worker:deploy -- --dry-run
 Shadowrocket 不会把原始响应或请求头发给 Worker。发送内容仅包括：
 
 - 帖子标题；
+- Feed 接口实际返回的帖子正文（最多 600 个字符）；
 - 分类名称；
 - 图文、视频或直播类型；
 - 小红书返回的广告布尔标记。

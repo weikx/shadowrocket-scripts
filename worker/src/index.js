@@ -2,13 +2,13 @@ const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
 const MAX_ITEMS = 30;
 
 const DEFAULT_POLICY = Object.freeze({
-  version: "2",
+  version: "3",
   interests: [],
   blockedTopics: [],
   highValueDescription:
-    "从标题可以明确看出包含具体事实、知识、方法、步骤、数据、可复用经验或值得深入了解的信息",
+    "从标题或正文可以明确看出包含具体事实、知识、方法、步骤、数据、可复用经验或值得深入了解的信息",
   lowValueDescription:
-    "标题党、空泛情绪、日常打卡、无上下文的随手发、重复搬运、互动诱导、刻意制造焦虑，或标题没有展示具体信息价值",
+    "标题党、空泛情绪、日常打卡、无上下文的随手发、重复搬运、互动诱导、刻意制造焦虑，或标题与正文都没有展示具体信息价值",
   filterAds: true,
   filterCommercial: true,
   thresholds: {
@@ -16,8 +16,8 @@ const DEFAULT_POLICY = Object.freeze({
     commercial: 0.75,
     veryLowQuality: 0.8,
     lowQuality: 0.6,
-    relevance: 0.5,
-    relevanceConfidence: 0.35
+    contentValue: 0.5,
+    contentValueConfidence: 0.35
   }
 });
 
@@ -82,13 +82,19 @@ function parsePolicy(raw) {
       lowQuality: clamp(
         finiteNumber(thresholds.lowQuality, DEFAULT_POLICY.thresholds.lowQuality)
       ),
-      relevance: clamp(
-        finiteNumber(thresholds.relevance, DEFAULT_POLICY.thresholds.relevance)
-      ),
-      relevanceConfidence: clamp(
+      contentValue: clamp(
         finiteNumber(
-          thresholds.relevanceConfidence,
-          DEFAULT_POLICY.thresholds.relevanceConfidence
+          thresholds.contentValue,
+          finiteNumber(thresholds.relevance, DEFAULT_POLICY.thresholds.contentValue)
+        )
+      ),
+      contentValueConfidence: clamp(
+        finiteNumber(
+          thresholds.contentValueConfidence,
+          finiteNumber(
+            thresholds.relevanceConfidence,
+            DEFAULT_POLICY.thresholds.contentValueConfidence
+          )
         )
       )
     }
@@ -101,6 +107,7 @@ function sanitizeItem(item, index) {
   return {
     key: cleanString(item.key, 40) || String(index),
     title: cleanString(item.title, 300),
+    content: cleanString(item.content, 600),
     category: cleanString(item.category, 100),
     contentType: cleanString(item.contentType, 30) || "unknown",
     isAds: item.isAds === true
@@ -118,9 +125,9 @@ function isAuthorized(request, env) {
 
 function buildState(posts, policy) {
   return {
-    language: "Chinese social-media titles; judge the supplied text as written",
+    language: "Chinese social-media posts; judge the supplied text as written",
     evidenceLimit:
-      "Judge content only from the title, category, and content type. Do not use or infer author identity. Do not infer unseen image, video, or article content. A vague title that does not demonstrate concrete value should be treated as low-value content.",
+      "Judge only the supplied title, content, category, and content type. Consider title and content together; either field may be empty. Do not penalize a missing title when the content itself provides useful evidence. Do not use or infer author identity. Do not infer unseen image, video, or other details.",
     preference: {
       interests: policy.interests.length ? policy.interests : ["No topic preference configured"],
       blockedTopics: policy.blockedTopics.length
@@ -130,7 +137,8 @@ function buildState(posts, policy) {
       lowValueContent: policy.lowValueDescription
     },
     posts: posts.map((item) => ({
-      title: item.title || "No usable title",
+      title: item.title,
+      content: item.content,
       category: item.category || "Unknown category",
       contentType: item.contentType
     }))
@@ -143,30 +151,41 @@ function buildQuestions(posts, policy) {
   posts.forEach((_post, index) => {
     const target = `Evaluate only \`posts[${index}]\`. Base the answer only on fields present in state.`;
 
-    questions[`relevance_${index}`] = {
+    questions[`content_value_${index}`] = {
       type: "score",
-      instructions: `${target} How likely is this post to match the user's interests and high-value-content preference?`,
+      instructions: {
+        question: `${target} How much does this post match \`preference.highValueContent\` and provide concrete informational or practical value?`,
+        inspect: `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together. Either may be empty.`,
+        constraint:
+          "Judge only the supplied text. Do not infer value from the author, unseen media, or details that are merely implied."
+      },
       criteria: [
-        "The title is vague, sensational, purely emotional, routine sharing, or shows no concrete informational value",
-        "The title identifies a topic but suggests little specific, reusable, or substantive value",
-        "The title clearly promises at least one useful fact, method, explanation, comparison, or concrete experience",
-        "The title clearly promises substantial, specific, reusable knowledge or unusually valuable first-hand experience"
+        "The supplied title and content are vague, sensational, purely emotional, routine sharing, or show no concrete informational value",
+        "The supplied title or content identifies a topic but offers little specific, reusable, or substantive value",
+        "The supplied title or content provides at least one useful fact, method, explanation, comparison, or concrete experience",
+        "The supplied title or content provides substantial, specific, reusable knowledge or unusually valuable first-hand experience"
       ]
     };
 
     questions[`low_quality_${index}`] = {
       type: "noul",
-      instructions: `${target} Is there strong evidence that this post matches \`preference.lowValueContent\`?`,
+      instructions: {
+        question: `${target} Does this post match \`preference.lowValueContent\`?`,
+        inspect: `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together. Either may be empty.`
+      },
       criteria: {
-        true: "The available title or metadata provides strong evidence of low-value content",
-        false: "The title itself demonstrates concrete informational or practical value"
+        true: "The supplied title and content provide strong evidence of low-value content",
+        false: "The supplied title or content demonstrates concrete informational or practical value"
       }
     };
 
     if (policy.filterCommercial) {
       questions[`commercial_${index}`] = {
         type: "noul",
-        instructions: `${target} Is its primary purpose clearly selling, promotion, lead generation, or disguised advertising?`,
+        instructions: {
+          question: `${target} Is this post's primary purpose selling, promotion, lead generation, or disguised advertising?`,
+          inspect: `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together.`
+        },
         criteria: {
           true: "Clear commercial promotion, price-led selling, merchant advertising, or lead generation",
           false: "Not primarily commercial, or there is not enough evidence"
@@ -177,10 +196,13 @@ function buildQuestions(posts, policy) {
     if (policy.blockedTopics.length) {
       questions[`blocked_${index}`] = {
         type: "noul",
-        instructions: `${target} Is this post clearly about one or more topics in \`preference.blockedTopics\`?`,
+        instructions: {
+          question: `${target} Is this post clearly about one or more topics in \`preference.blockedTopics\`?`,
+          inspect: `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together.`
+        },
         criteria: {
           true: "The post clearly belongs to a blocked topic",
-          false: "It does not, or the title is too ambiguous to establish that"
+          false: "It does not, or the supplied title and content are too ambiguous to establish that"
         }
       };
     }
@@ -190,20 +212,42 @@ function buildQuestions(posts, policy) {
 }
 
 function readNoul(answers, key) {
-  const value = answers?.[key]?.noul;
-  return clamp(finiteNumber(value, 0));
+  const answer = answers?.[key];
+  if (answer?.type !== "noul" || !Number.isFinite(answer.noul)) {
+    throw new Error(`TypeSafe response is missing a valid Noul answer for ${key}`);
+  }
+  return clamp(answer.noul);
 }
 
 function readScore(answers, key) {
-  const answer = answers?.[key] || {};
+  const answer = answers?.[key];
+  if (
+    answer?.type !== "score" ||
+    !Number.isFinite(answer.score) ||
+    !Number.isFinite(answer.confidence)
+  ) {
+    throw new Error(`TypeSafe response is missing a valid Score answer for ${key}`);
+  }
   return {
-    value: clamp(finiteNumber(answer.score, 1.5) / 3),
-    confidence: clamp(finiteNumber(answer.confidence, 0))
+    value: clamp(answer.score / 3),
+    confidence: clamp(answer.confidence)
   };
 }
 
+function retryDelayMs(response, retryIndex) {
+  const retryAfter = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) {
+    return Math.min(1000, retryAfter * 1000);
+  }
+  return 200 * 2 ** retryIndex;
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function makeModelDecision(item, index, answers, policy) {
-  const relevance = readScore(answers, `relevance_${index}`);
+  const contentValue = readScore(answers, `content_value_${index}`);
   const lowQuality = readNoul(answers, `low_quality_${index}`);
   const commercial = policy.filterCommercial
     ? readNoul(answers, `commercial_${index}`)
@@ -220,15 +264,15 @@ function makeModelDecision(item, index, answers, policy) {
   }
   if (
     lowQuality < policy.thresholds.veryLowQuality &&
-    relevance.value <= policy.thresholds.relevance &&
-    relevance.confidence >= policy.thresholds.relevanceConfidence &&
+    contentValue.value <= policy.thresholds.contentValue &&
+    contentValue.confidence >= policy.thresholds.contentValueConfidence &&
     lowQuality >= policy.thresholds.lowQuality
   ) {
-    reasonCodes.push("LOW_RELEVANCE_AND_QUALITY");
+    reasonCodes.push("LOW_VALUE_AND_QUALITY");
   }
 
   const keepScore = clamp(
-    relevance.value * 0.65 +
+    contentValue.value * 0.65 +
       (1 - lowQuality) * 0.35 -
       commercial * 0.2 -
       blocked * 0.5
@@ -238,8 +282,8 @@ function makeModelDecision(item, index, answers, policy) {
     key: item.key,
     action: reasonCodes.length ? "drop" : "keep",
     keepScore: Number(keepScore.toFixed(4)),
-    relevance: Number(relevance.value.toFixed(4)),
-    relevanceConfidence: Number(relevance.confidence.toFixed(4)),
+    contentValue: Number(contentValue.value.toFixed(4)),
+    contentValueConfidence: Number(contentValue.confidence.toFixed(4)),
     lowQuality: Number(lowQuality.toFixed(4)),
     commercial: Number(commercial.toFixed(4)),
     blocked: Number(blocked.toFixed(4)),
@@ -253,21 +297,29 @@ async function callTypeSafe(posts, policy, env) {
   const timeoutMs = Math.max(500, Number(env.TYPESAFE_TIMEOUT_MS) || 4500);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const requestBody = JSON.stringify({
+    state: buildState(posts, policy),
+    model: env.TYPESAFE_MODEL || "jev-1.13.0",
+    questions: buildQuestions(posts, policy)
+  });
 
   try {
-    const response = await fetch(TYPESAFE_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${env.TYPESAFE_API_KEY}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        state: buildState(posts, policy),
-        model: env.TYPESAFE_MODEL || "jev-1.13.0",
-        questions: buildQuestions(posts, policy)
-      }),
-      signal: controller.signal
-    });
+    let response;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetch(TYPESAFE_URL, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${env.TYPESAFE_API_KEY}`,
+          "content-type": "application/json"
+        },
+        body: requestBody,
+        signal: controller.signal
+      });
+
+      if (![429, 529].includes(response.status) || attempt === 2) break;
+      await response.body?.cancel();
+      await wait(retryDelayMs(response, attempt));
+    }
 
     if (!response.ok) {
       const details = (await response.text()).slice(0, 500);
@@ -294,8 +346,8 @@ async function filterItems(items, policy, env) {
         key: item.key,
         action: "drop",
         keepScore: 0,
-        relevance: 0,
-        relevanceConfidence: 1,
+        contentValue: 0,
+        contentValueConfidence: 1,
         lowQuality: 1,
         commercial: 1,
         blocked: 0,
@@ -309,8 +361,8 @@ async function filterItems(items, policy, env) {
         key: item.key,
         action: "drop",
         keepScore: 0,
-        relevance: 0,
-        relevanceConfidence: 1,
+        contentValue: 0,
+        contentValueConfidence: 1,
         lowQuality: 1,
         commercial: 0,
         blocked: 0,
@@ -319,13 +371,13 @@ async function filterItems(items, policy, env) {
       return;
     }
 
-    if (!item.title) {
+    if (!item.title && !item.content) {
       decisions[inputIndex] = {
         key: item.key,
         action: "drop",
         keepScore: 0,
-        relevance: 0,
-        relevanceConfidence: 1,
+        contentValue: 0,
+        contentValueConfidence: 1,
         lowQuality: 1,
         commercial: 0,
         blocked: 0,

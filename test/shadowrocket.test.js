@@ -70,6 +70,27 @@ test("observe mode marks decisions without deleting feed items", async () => {
   assert.doesNotMatch(JSON.stringify(requestBody), /作者/);
 });
 
+test("sends available post content separately from the title", async () => {
+  const { requestBody } = await runScript(
+    "observe",
+    [{ key: "0", action: "keep", keepScore: 0.9 }],
+    (input) => {
+      input.data[0].title = "一个很短的标题";
+      input.data[0].desc = "正文包含三个可执行步骤和每一步的注意事项。";
+      input.data[1].title = "";
+      input.data[1].desc = "虽然没有标题，但正文包含完整的经验总结。";
+    }
+  );
+
+  assert.equal(requestBody.items[0].title, "一个很短的标题");
+  assert.equal(
+    requestBody.items[0].content,
+    "正文包含三个可执行步骤和每一步的注意事项。"
+  );
+  assert.equal(requestBody.items[1].title, "");
+  assert.equal(requestBody.items[1].content, "虽然没有标题，但正文包含完整的经验总结。");
+});
+
 test("filter mode always removes live cards even below the minimum count", async () => {
   const { value } = await runScript(
     "filter",

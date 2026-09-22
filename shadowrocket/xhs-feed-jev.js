@@ -77,7 +77,44 @@
   function itemTitle(item) {
     if (!item || typeof item !== "object") return "";
     if (item.live && typeof item.live.name === "string") return item.live.name;
-    return item.title || item.display_title || item.name || item.desc || "";
+    return firstText([
+      item.title,
+      item.display_title,
+      item.name,
+      item.note && item.note.title,
+      item.note && item.note.display_title,
+      item.note_card && item.note_card.title,
+      item.note_card && item.note_card.display_title,
+      item.note_info && item.note_info.title,
+      item.note_info && item.note_info.display_title
+    ]);
+  }
+
+  function firstText(values) {
+    for (var index = 0; index < values.length; index += 1) {
+      if (typeof values[index] === "string" && values[index].trim()) {
+        return values[index].trim();
+      }
+    }
+    return "";
+  }
+
+  function itemContent(item) {
+    if (!item || typeof item !== "object") return "";
+    return firstText([
+      item.desc,
+      item.content,
+      item.description,
+      item.note && item.note.desc,
+      item.note && item.note.content,
+      item.note && item.note.description,
+      item.note_card && item.note_card.desc,
+      item.note_card && item.note_card.content,
+      item.note_card && item.note_card.description,
+      item.note_info && item.note_info.desc,
+      item.note_info && item.note_info.content,
+      item.note_info && item.note_info.description
+    ]);
   }
 
   function itemAuthor(item) {
@@ -97,9 +134,15 @@
   }
 
   function toFilterItem(item, index) {
+    var rawTitle = String(itemTitle(item));
+    var rawContent = String(itemContent(item));
+    var title = rawTitle.slice(0, 300);
+    var content = rawContent === rawTitle ? "" : rawContent.slice(0, 600);
+
     return {
       key: String(index),
-      title: String(itemTitle(item)).slice(0, 300),
+      title: title,
+      content: content,
       category: String(itemCategory(item)).slice(0, 100),
       contentType: item && item.type === "live" ? "live" : String(item.type || "note"),
       isAds: Boolean(item && item.is_ads === true)

@@ -1,5 +1,5 @@
 {
-  "version": "2",
+  "version": "3",
   "interests": [
     "请把这里替换成你希望看到的主题，例如 AI 工具与实际工作方法",
     "请把这里替换成你希望看到的主题，例如软件工程与产品设计"
@@ -7,8 +7,8 @@
   "blockedTopics": [
     "请把这里替换成你明确不想看到的主题"
   ],
-  "highValueDescription": "从标题可以明确看出包含具体事实、知识、方法、步骤、数据、可复用经验或值得深入了解的信息",
-  "lowValueDescription": "标题党、空泛情绪、日常打卡、无上下文的随手发、重复搬运、互动诱导、刻意制造焦虑，或标题没有展示具体信息价值",
+  "highValueDescription": "从标题或正文可以明确看出包含具体事实、知识、方法、步骤、数据、可复用经验或值得深入了解的信息",
+  "lowValueDescription": "标题党、空泛情绪、日常打卡、无上下文的随手发、重复搬运、互动诱导、刻意制造焦虑，或标题与正文都没有展示具体信息价值",
   "filterAds": true,
   "filterCommercial": true,
   "thresholds": {
@@ -16,7 +16,7 @@
     "commercial": 0.75,
     "veryLowQuality": 0.8,
     "lowQuality": 0.6,
-    "relevance": 0.5,
-    "relevanceConfidence": 0.35
+    "contentValue": 0.5,
+    "contentValueConfidence": 0.35
   }
 }
