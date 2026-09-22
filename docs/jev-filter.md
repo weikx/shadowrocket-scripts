@@ -5,7 +5,7 @@
 1. Shadowrocket 脚本读取小红书 Feed，只提取标题、分类、内容类型和广告标记；作者昵称不会上传，也不参与判断。
 2. Cloudflare Worker 保存 TypeSafe API Key，调用 Jev 并返回结构化的 `keep/drop` 结果。
 
-默认采用 `observe` 模式：不删除帖子，只把作者昵称临时改为 `[保留 82] 原昵称` 或 `[过滤 13] 原昵称`。观察结果满意以后，才将 Module 中的 `mode=observe` 改为 `mode=filter`。
+默认采用 `observe` 模式：不删除帖子，只把作者昵称临时改为 `[✅保留] 原昵称` 或 `[❌移除] 原昵称`。观察结果满意以后，才将 Module 中的 `mode=observe` 改为 `mode=filter`。
 
 ## 1. 准备 TypeSafe API Key
 
@@ -124,11 +124,11 @@ argument=endpoint=https%3A%2F%2Fxhs-jev-filter.example.workers.dev%2Ffilter&toke
 在 `observe` 模式下刷新小红书首页：
 
 ```text
-[保留 82] 原作者
-[过滤 13] 原作者
+[✅保留] 原作者
+[❌移除] 原作者
 ```
 
-分数是 Worker 返回的综合保留分，范围为 0–100。观察一段时间并调整策略、阈值，确认误判率可以接受以后，把本地 Module 中的：
+观察一段时间并调整策略、阈值，确认误判率可以接受以后，把本地 Module 中的：
 
 ```text
 mode=observe

@@ -123,9 +123,8 @@
       if (!item) return;
 
       var original = itemAuthor(item) || "未知作者";
-      var score = Math.round(Number(decision.keepScore || 0) * 100);
-      var marker = decision.action === "drop" ? "过滤" : "保留";
-      setNickname(item, "[" + marker + " " + score + "] " + original);
+      var marker = decision.action === "drop" ? "❌移除" : "✅保留";
+      setNickname(item, "[" + marker + "] " + original);
     });
     return 0;
   }

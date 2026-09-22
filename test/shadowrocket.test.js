@@ -64,8 +64,8 @@ test("observe mode marks decisions without deleting feed items", async () => {
   ]);
   const output = JSON.parse(value.body);
   assert.equal(output.data.length, 10);
-  assert.equal(output.data[0].user.nickname, "[过滤 13] 作者 0");
-  assert.equal(output.data[1].user.nickname, "[保留 86] 作者 1");
+  assert.equal(output.data[0].user.nickname, "[❌移除] 作者 0");
+  assert.equal(output.data[1].user.nickname, "[✅保留] 作者 1");
   assert.equal("author" in requestBody.items[0], false);
   assert.doesNotMatch(JSON.stringify(requestBody), /作者/);
 });
