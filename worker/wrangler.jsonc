@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "xhs-jev-filter",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-22",
+  "workers_dev": true,
+  "vars": {
+    "TYPESAFE_MODEL": "jev-1.13.0",
+    "TYPESAFE_TIMEOUT_MS": "4500"
+  }
+}

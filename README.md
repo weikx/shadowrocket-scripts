@@ -1,4 +1,17 @@
-# 小红书 Feed 昵称替换测试
+# Shadowrocket Scripts
+
+## Jev Feed 过滤器
+
+完整代码已经包含：
+
+- `worker/`：部署到 Cloudflare Workers 的 Jev 中转与决策服务；
+- `shadowrocket/xhs-feed-jev.js`：Shadowrocket Feed 处理脚本；
+- `shadowrocket/xhs-feed-jev.module`：Module 模板；
+- `test/`：Worker 与 Shadowrocket 脚本测试。
+
+部署、个人策略和 Shadowrocket 配置见 [`docs/jev-filter.md`](docs/jev-filter.md)。
+
+## 昵称替换测试
 
 这组文件用于验证 Shadowrocket 能否拦截并重写小红书首页 Feed 响应。它只把可见作者昵称改成 `momo`，不修改帖子标题、帖子 ID、分页字段或其他业务数据。
 
@@ -16,9 +29,9 @@
    ```
 
 2. 启用“`小红书 Feed 昵称改为 momo`”Module。
-4. 在 Shadowrocket 中生成并安装 HTTPS 解密证书，然后到 iOS 的“设置 > 通用 > 关于本机 > 证书信任设置”中对该根证书启用完全信任。
-5. 确认 HTTPS 解密/MITM 已启用，并且 hostname 包含 `rec.xiaohongshu.com`。
-6. 完全关闭小红书后重新打开，刷新推荐首页。普通帖子和直播卡片的作者昵称应显示为 `momo`。
+3. 在 Shadowrocket 中生成并安装 HTTPS 解密证书，然后到 iOS 的“设置 > 通用 > 关于本机 > 证书信任设置”中对该根证书启用完全信任。
+4. 确认 HTTPS 解密/MITM 已启用，并且 hostname 包含 `rec.xiaohongshu.com`。
+5. 完全关闭小红书后重新打开，刷新推荐首页。普通帖子和直播卡片的作者昵称应显示为 `momo`。
 
 Module 的 URL 匹配只限定到下面这个接口路径，不包含不断变化的 query 参数：
 
