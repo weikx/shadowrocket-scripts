@@ -8,7 +8,7 @@ const script = fs.readFileSync(
   "utf8"
 );
 
-function runScript(mode, decisions) {
+function runScript(mode, decisions, customizeInput) {
   const input = {
     data: Array.from({ length: 10 }, (_, index) => ({
       id: String(index),
@@ -19,6 +19,8 @@ function runScript(mode, decisions) {
       recommend: { category_name: "测试" }
     }))
   };
+  if (customizeInput) customizeInput(input);
+  let requestBody;
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Script test timed out")), 1000);
@@ -28,13 +30,14 @@ function runScript(mode, decisions) {
         "&timeoutMs=500&minKeep=6&minKeepRatio=0.4",
       $response: { body: JSON.stringify(input) },
       $httpClient: {
-        post(_options, callback) {
+        post(options, callback) {
+          requestBody = JSON.parse(options.body);
           callback(null, { status: 200 }, JSON.stringify({ decisions, model: "test" }));
         }
       },
       $done(value) {
         clearTimeout(timer);
-        resolve({ input, value });
+        resolve({ input, requestBody, value });
       },
       console,
       setTimeout,
@@ -55,7 +58,7 @@ function runScript(mode, decisions) {
 }
 
 test("observe mode marks decisions without deleting feed items", async () => {
-  const { value } = await runScript("observe", [
+  const { value, requestBody } = await runScript("observe", [
     { key: "0", action: "drop", keepScore: 0.13 },
     { key: "1", action: "keep", keepScore: 0.86 }
   ]);
@@ -63,6 +66,25 @@ test("observe mode marks decisions without deleting feed items", async () => {
   assert.equal(output.data.length, 10);
   assert.equal(output.data[0].user.nickname, "[过滤 13] 作者 0");
   assert.equal(output.data[1].user.nickname, "[保留 86] 作者 1");
+  assert.equal("author" in requestBody.items[0], false);
+  assert.doesNotMatch(JSON.stringify(requestBody), /作者/);
+});
+
+test("filter mode always removes live cards even below the minimum count", async () => {
+  const { value } = await runScript(
+    "filter",
+    [{ key: "0", action: "drop", keepScore: 0, reasonCodes: ["LIVE_CARD"] }],
+    (input) => {
+      input.data = input.data.slice(0, 5);
+      input.data[0].type = "live";
+    }
+  );
+  const output = JSON.parse(value.body);
+  assert.equal(output.data.length, 4);
+  assert.deepEqual(
+    output.data.map((item) => item.id),
+    ["1", "2", "3", "4"]
+  );
 });
 
 test("filter mode deletes strongest drops but preserves the minimum count", async () => {

@@ -2,23 +2,22 @@ const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
 const MAX_ITEMS = 30;
 
 const DEFAULT_POLICY = Object.freeze({
-  version: "1",
+  version: "2",
   interests: [],
   blockedTopics: [],
   highValueDescription:
-    "有具体事实、知识、方法、步骤、数据、亲身经验或值得了解的信息，而不是只有情绪或噱头",
+    "从标题可以明确看出包含具体事实、知识、方法、步骤、数据、可复用经验或值得深入了解的信息",
   lowValueDescription:
-    "标题党、空泛情绪、无上下文的随手发、重复搬运、刻意制造焦虑，或标题几乎没有可判断的信息",
+    "标题党、空泛情绪、日常打卡、无上下文的随手发、重复搬运、互动诱导、刻意制造焦虑，或标题没有展示具体信息价值",
   filterAds: true,
-  filterLive: false,
   filterCommercial: true,
   thresholds: {
-    blocked: 0.92,
-    commercial: 0.92,
-    veryLowQuality: 0.95,
-    lowQuality: 0.85,
-    relevance: 0.25,
-    relevanceConfidence: 0.55
+    blocked: 0.8,
+    commercial: 0.75,
+    veryLowQuality: 0.8,
+    lowQuality: 0.6,
+    relevance: 0.5,
+    relevanceConfidence: 0.35
   }
 });
 
@@ -68,7 +67,6 @@ function parsePolicy(raw) {
     lowValueDescription:
       cleanString(custom.lowValueDescription, 1000) || DEFAULT_POLICY.lowValueDescription,
     filterAds: custom.filterAds !== false,
-    filterLive: custom.filterLive === true,
     filterCommercial: custom.filterCommercial !== false,
     thresholds: {
       blocked: clamp(finiteNumber(thresholds.blocked, DEFAULT_POLICY.thresholds.blocked)),
@@ -103,7 +101,6 @@ function sanitizeItem(item, index) {
   return {
     key: cleanString(item.key, 40) || String(index),
     title: cleanString(item.title, 300),
-    author: cleanString(item.author, 100),
     category: cleanString(item.category, 100),
     contentType: cleanString(item.contentType, 30) || "unknown",
     isAds: item.isAds === true
@@ -123,7 +120,7 @@ function buildState(posts, policy) {
   return {
     language: "Chinese social-media titles; judge the supplied text as written",
     evidenceLimit:
-      "Only title and metadata are available. Do not infer unseen image, video, or article content. Insufficient evidence should favor keeping the post.",
+      "Judge content only from the title, category, and content type. Do not use or infer author identity. Do not infer unseen image, video, or article content. A vague title that does not demonstrate concrete value should be treated as low-value content.",
     preference: {
       interests: policy.interests.length ? policy.interests : ["No topic preference configured"],
       blockedTopics: policy.blockedTopics.length
@@ -134,7 +131,6 @@ function buildState(posts, policy) {
     },
     posts: posts.map((item) => ({
       title: item.title || "No usable title",
-      author: item.author || "Unknown author",
       category: item.category || "Unknown category",
       contentType: item.contentType
     }))
@@ -151,10 +147,10 @@ function buildQuestions(posts, policy) {
       type: "score",
       instructions: `${target} How likely is this post to match the user's interests and high-value-content preference?`,
       criteria: [
-        "Clearly unwanted or offers no plausible value under the preference",
-        "Probably not useful, although the evidence is limited",
-        "Possibly useful or too ambiguous to reject from the available title",
-        "Clearly useful and aligned with the preference"
+        "The title is vague, sensational, purely emotional, routine sharing, or shows no concrete informational value",
+        "The title identifies a topic but suggests little specific, reusable, or substantive value",
+        "The title clearly promises at least one useful fact, method, explanation, comparison, or concrete experience",
+        "The title clearly promises substantial, specific, reusable knowledge or unusually valuable first-hand experience"
       ]
     };
 
@@ -163,7 +159,7 @@ function buildQuestions(posts, policy) {
       instructions: `${target} Is there strong evidence that this post matches \`preference.lowValueContent\`?`,
       criteria: {
         true: "The available title or metadata provides strong evidence of low-value content",
-        false: "It appears useful, or the available evidence is insufficient to call it low quality"
+        false: "The title itself demonstrates concrete informational or practical value"
       }
     };
 
@@ -308,17 +304,17 @@ async function filterItems(items, policy, env) {
       return;
     }
 
-    if (item.contentType === "live" && !policy.filterLive) {
+    if (item.contentType === "live") {
       decisions[inputIndex] = {
         key: item.key,
-        action: "keep",
-        keepScore: 1,
-        relevance: 1,
+        action: "drop",
+        keepScore: 0,
+        relevance: 0,
         relevanceConfidence: 1,
-        lowQuality: 0,
+        lowQuality: 1,
         commercial: 0,
         blocked: 0,
-        reasonCodes: ["LIVE_ALLOWED"]
+        reasonCodes: ["LIVE_CARD"]
       };
       return;
     }
@@ -326,14 +322,14 @@ async function filterItems(items, policy, env) {
     if (!item.title) {
       decisions[inputIndex] = {
         key: item.key,
-        action: "keep",
-        keepScore: 0.5,
-        relevance: 0.5,
-        relevanceConfidence: 0,
-        lowQuality: 0,
+        action: "drop",
+        keepScore: 0,
+        relevance: 0,
+        relevanceConfidence: 1,
+        lowQuality: 1,
         commercial: 0,
         blocked: 0,
-        reasonCodes: ["INSUFFICIENT_CONTEXT"]
+        reasonCodes: ["NO_CONTENT"]
       };
       return;
     }

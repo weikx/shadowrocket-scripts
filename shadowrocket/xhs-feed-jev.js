@@ -100,7 +100,6 @@
     return {
       key: String(index),
       title: String(itemTitle(item)).slice(0, 300),
-      author: String(itemAuthor(item)).slice(0, 100),
       category: String(itemCategory(item)).slice(0, 100),
       contentType: item && item.type === "live" ? "live" : String(item.type || "note"),
       isAds: Boolean(item && item.is_ads === true)
@@ -136,15 +135,31 @@
       Math.min(config.minKeep, payload.data.length),
       Math.ceil(payload.data.length * config.minKeepRatio)
     );
-    var maxDrops = Math.max(0, payload.data.length - minimum);
-    var dropCandidates = decisions
+    var deterministicDrops = decisions.filter(function (decision) {
+      return (
+        decision.action === "drop" &&
+        Array.isArray(decision.reasonCodes) &&
+        decision.reasonCodes.some(function (reason) {
+          return reason === "AD_FLAG" || reason === "LIVE_CARD";
+        })
+      );
+    });
+    var deterministicKeys = {};
+    deterministicDrops.forEach(function (decision) {
+      deterministicKeys[String(decision.key)] = true;
+    });
+
+    var remainingAfterDeterministic = payload.data.length - deterministicDrops.length;
+    var maxSemanticDrops = Math.max(0, remainingAfterDeterministic - minimum);
+    var semanticDrops = decisions
       .filter(function (decision) {
-        return decision.action === "drop";
+        return decision.action === "drop" && !deterministicKeys[String(decision.key)];
       })
       .sort(function (left, right) {
         return Number(left.keepScore || 0) - Number(right.keepScore || 0);
       })
-      .slice(0, maxDrops);
+      .slice(0, maxSemanticDrops);
+    var dropCandidates = deterministicDrops.concat(semanticDrops);
     var dropKeys = {};
 
     dropCandidates.forEach(function (decision) {

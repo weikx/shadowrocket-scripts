@@ -2,7 +2,7 @@
 
 这个版本由两个部分组成：
 
-1. Shadowrocket 脚本读取小红书 Feed，只提取标题、作者、分类、内容类型和广告标记。
+1. Shadowrocket 脚本读取小红书 Feed，只提取标题、分类、内容类型和广告标记；作者昵称不会上传，也不参与判断。
 2. Cloudflare Worker 保存 TypeSafe API Key，调用 Jev 并返回结构化的 `keep/drop` 结果。
 
 默认采用 `observe` 模式：不删除帖子，只把作者昵称临时改为 `[保留 82] 原昵称` 或 `[过滤 13] 原昵称`。观察结果满意以后，才将 Module 中的 `mode=observe` 改为 `mode=filter`。
@@ -87,7 +87,7 @@ npx wrangler secret put FILTER_POLICY_JSON --config worker/wrangler.jsonc < work
 
 `policy.local.json` 已被 `.gitignore` 排除，不会被提交。修改策略后重新执行上面的命令即可，不需要重新发布 Shadowrocket 脚本。
 
-默认阈值非常保守：只有明确的广告、屏蔽主题、营销内容或高概率低质量内容才会标记为过滤。Jev 只有标题和少量元数据可用，无法查看 Feed 里的封面与视频，因此信息不足时默认保留。
+当前默认策略偏严格：直播卡片和显式广告固定过滤；普通帖子只看标题、分类和内容类型，不参考作者身份。明确营销概率达到 `0.75`、低质量概率达到 `0.8`，或同时满足相关性不高于 `0.5`、低质量概率至少 `0.6`、相关性判断置信度至少 `0.35` 时，会标记为过滤。Jev 无法查看 Feed 里的封面与视频，因此判断的是标题所展示出来的内容价值。
 
 ## 4. 配置 Shadowrocket Module
 
@@ -140,7 +140,7 @@ mode=observe
 mode=filter
 ```
 
-正式过滤时，脚本默认至少保留 6 条，同时至少保留原 Feed 的 40%，避免整页被删空。Worker、Jev 或 JSON 处理失败时，脚本会原样放行该页。
+正式过滤时，直播卡片和显式广告固定删除。其余由 Jev 判定的帖子默认至少保留 6 条，同时至少保留原 Feed 的 40%，避免语义判断一次删掉过多内容。Worker、Jev 或 JSON 处理失败时，脚本会原样放行该页。
 
 ## 6. 接口测试
 
@@ -153,7 +153,7 @@ CLIENT_TOKEN_VALUE='<你的 CLIENT_TOKEN>'
 curl "$FILTER_URL" \
   -H "Authorization: Bearer $CLIENT_TOKEN_VALUE" \
   -H 'Content-Type: application/json' \
-  --data '{"items":[{"key":"0","title":"在飞书里用豆包工作的几个实用方法","author":"测试作者","category":"科技","contentType":"normal","isAds":false}]}'
+  --data '{"items":[{"key":"0","title":"在飞书里用豆包工作的几个实用方法","category":"科技","contentType":"normal","isAds":false}]}'
 ```
 
 响应中的 `decisions[0].action` 应为 `keep` 或 `drop`，并包含各项概率、原因代码、模型版本和 token 用量。
@@ -170,7 +170,6 @@ npm run worker:deploy -- --dry-run
 Shadowrocket 不会把原始响应或请求头发给 Worker。发送内容仅包括：
 
 - 帖子标题；
-- 作者昵称；
 - 分类名称；
 - 图文、视频或直播类型；
 - 小红书返回的广告布尔标记。

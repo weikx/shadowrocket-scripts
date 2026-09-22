@@ -65,7 +65,7 @@ test("questions are independent and include the post index in instructions", () 
   assert.match(questions.relevance_0.instructions, /posts\[0\]/);
 });
 
-test("one TypeSafe call handles a page and deterministic rules skip ads and live cards", async (t) => {
+test("strict defaults remove live cards and never send author names to Jev", async (t) => {
   let callCount = 0;
   let requestPayload;
   const originalFetch = globalThis.fetch;
@@ -77,7 +77,7 @@ test("one TypeSafe call handles a page and deterministic rules skip ads and live
         model: "jev-1.13.0",
         answers: {
           relevance_0: { type: "score", score: 0.3, confidence: 0.9 },
-          low_quality_0: { type: "noul", noul: 0.9 },
+          low_quality_0: { type: "noul", noul: 0.7 },
           commercial_0: { type: "noul", noul: 0.1 },
           relevance_1: { type: "score", score: 2.8, confidence: 0.9 },
           low_quality_1: { type: "noul", noul: 0.05 },
@@ -97,7 +97,8 @@ test("one TypeSafe call handles a page and deterministic rules skip ads and live
       { key: "0", title: "商品限时特价", contentType: "normal", isAds: true },
       { key: "1", title: "哈哈哈哈", contentType: "normal", isAds: false },
       { key: "2", title: "如何排查 Node.js 内存泄漏", contentType: "normal", isAds: false },
-      { key: "3", title: "直播中", contentType: "live", isAds: false }
+      { key: "3", title: "直播中", contentType: "live", isAds: false },
+      { key: "4", title: "", contentType: "normal", isAds: false }
     ]),
     baseEnv
   );
@@ -106,6 +107,8 @@ test("one TypeSafe call handles a page and deterministic rules skip ads and live
   assert.equal(response.status, 200);
   assert.equal(callCount, 1);
   assert.equal(requestPayload.state.posts.length, 2);
+  assert.equal("author" in requestPayload.state.posts[0], false);
+  assert.doesNotMatch(JSON.stringify(requestPayload.state), /作者/);
   assert.equal(Object.keys(requestPayload.questions).length, 6);
   assert.deepEqual(
     result.decisions.map(({ key, action, reasonCodes }) => ({ key, action, reasonCodes })),
@@ -113,7 +116,18 @@ test("one TypeSafe call handles a page and deterministic rules skip ads and live
       { key: "0", action: "drop", reasonCodes: ["AD_FLAG"] },
       { key: "1", action: "drop", reasonCodes: ["LOW_RELEVANCE_AND_QUALITY"] },
       { key: "2", action: "keep", reasonCodes: [] },
-      { key: "3", action: "keep", reasonCodes: ["LIVE_ALLOWED"] }
+      { key: "3", action: "drop", reasonCodes: ["LIVE_CARD"] },
+      { key: "4", action: "drop", reasonCodes: ["NO_CONTENT"] }
     ]
   );
+});
+
+test("strict default thresholds are more selective", () => {
+  const policy = parsePolicy();
+  assert.equal(policy.version, "2");
+  assert.equal(policy.thresholds.commercial, 0.75);
+  assert.equal(policy.thresholds.veryLowQuality, 0.8);
+  assert.equal(policy.thresholds.lowQuality, 0.6);
+  assert.equal(policy.thresholds.relevance, 0.5);
+  assert.equal(policy.thresholds.relevanceConfidence, 0.35);
 });
