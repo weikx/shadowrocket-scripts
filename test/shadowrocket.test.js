@@ -84,15 +84,19 @@ test("observe mode shows deterministic and fallback removal reasons in titles", 
   const { value } = await runScript("observe", [
     { key: "0", action: "drop", reasonCodes: ["AD_FLAG"] },
     { key: "1", action: "drop", reasonCodes: ["CONFLICT_BAIT"] },
-    { key: "2", action: "drop", reasonCodes: [] },
-    { key: "3", action: "drop", reasonCodes: ["FUTURE_REASON"] }
+    { key: "2", action: "drop", reasonCodes: ["GENDER_FAMILY_CONFLICT"] },
+    { key: "3", action: "drop", reasonCodes: ["PERSONAL_EMOTION"] },
+    { key: "4", action: "drop", reasonCodes: [] },
+    { key: "5", action: "drop", reasonCodes: ["FUTURE_REASON"] }
   ]);
   const output = JSON.parse(value.body);
 
   assert.equal(output.data[0].title, "[移除原因：显式广告] 标题 0");
   assert.equal(output.data[1].title, "[移除原因：引战] 标题 1");
-  assert.equal(output.data[2].title, "[移除原因：未提供原因] 标题 2");
-  assert.equal(output.data[3].title, "[移除原因：FUTURE_REASON] 标题 3");
+  assert.equal(output.data[2].title, "[移除原因：性别或家庭对立] 标题 2");
+  assert.equal(output.data[3].title, "[移除原因：个人情绪表达] 标题 3");
+  assert.equal(output.data[4].title, "[移除原因：未提供原因] 标题 4");
+  assert.equal(output.data[5].title, "[移除原因：FUTURE_REASON] 标题 5");
 });
 
 test("observe mode writes a reason title when the original title is empty", async () => {
@@ -143,6 +147,34 @@ test("filter mode always removes live cards even below the minimum count", async
   assert.deepEqual(
     output.data.map((item) => item.id),
     ["1", "2", "3", "4"]
+  );
+});
+
+test("filter mode always removes conflict and personal emotion below the minimum count", async () => {
+  const { value } = await runScript(
+    "filter",
+    [
+      {
+        key: "0",
+        action: "drop",
+        keepScore: 0.8,
+        reasonCodes: ["GENDER_FAMILY_CONFLICT"]
+      },
+      {
+        key: "1",
+        action: "drop",
+        keepScore: 0.8,
+        reasonCodes: ["PERSONAL_EMOTION"]
+      }
+    ],
+    (input) => {
+      input.data = input.data.slice(0, 5);
+    }
+  );
+  const output = JSON.parse(value.body);
+  assert.deepEqual(
+    output.data.map((item) => item.id),
+    ["2", "3", "4"]
   );
 });
 

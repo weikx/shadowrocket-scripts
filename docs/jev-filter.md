@@ -79,7 +79,7 @@ cp worker/policy.example.json worker/policy.local.json
 - `blockedTopics`：明确不想看到的主题。
 - `highValueDescription`：你认为有价值的内容标准。
 - `contentValueCriteria`：信息价值从 0 到 3 的四级定义。
-- `enabledSignals`：分别启用或关闭营销、引战、群体对立、情绪宣泄、负面噪音和互动诱导。
+- `enabledSignals`：分别启用或关闭营销、引战、群体对立、性别/家庭对立、个人情绪表达、负面噪音和互动诱导。
 - `signalDefinitions`：每个语义信号中“是”和“否”的明确边界。
 - `enabledPreserveSignals`：分别启用或关闭经验分享、生活分享和摄影分享保护。
 - `preserveSignalDefinitions`：三类应保留内容的明确边界。
@@ -93,7 +93,7 @@ npx wrangler secret put FILTER_POLICY_JSON --config worker/wrangler.jsonc < work
 
 `policy.local.json` 已被 `.gitignore` 排除，不会被提交。修改策略后重新执行上面的命令即可，不需要重新发布 Shadowrocket 脚本。
 
-当前策略同时包含过滤信号和保留信号：直播卡片和小红书显式标记的广告固定过滤；普通帖子综合判断标题、Feed 返回的正文、分类和内容类型，不参考作者身份。默认策略只允许明确的商业营销、引战、群体对立和纯负面情绪宣泄触发语义过滤；低信息价值、互动诱导和一般负面主题不会单独触发删除。
+当前策略同时包含过滤信号和保留信号：直播卡片和小红书显式标记的广告固定过滤；普通帖子综合判断标题、Feed 返回的正文、分类和内容类型，不参考作者身份。默认策略过滤明确的商业营销、引战、群体对立、性别/家庭对立，以及以表达作者个人情绪或心情为主要目的的帖子；低信息价值、互动诱导和一般负面主题不会单独触发删除。
 
 | 规则 | 默认条件 | 原因码 |
 | --- | --- | --- |
@@ -101,7 +101,8 @@ npx wrangler secret put FILTER_POLICY_JSON --config worker/wrangler.jsonc < work
 | 商业营销 | `commercial >= 0.80` | `COMMERCIAL` |
 | 引战 | `conflictBait >= 0.82` | `CONFLICT_BAIT` |
 | 群体对立 | `polarization >= 0.82` | `POLARIZATION` |
-| 纯负面情绪宣泄 | `emotionalVenting >= 0.88`，同时 `contentValue <= 0.40` 且 `confidence >= 0.60`，并且不属于三类保留内容 | `EMOTIONAL_VENTING` |
+| 性别/家庭对立 | `genderFamilyConflict >= 0.65` | `GENDER_FAMILY_CONFLICT` |
+| 个人情绪表达 | `personalEmotion >= 0.65` | `PERSONAL_EMOTION` |
 
 三类保留信号及默认阈值：
 
@@ -111,11 +112,13 @@ npx wrangler secret put FILTER_POLICY_JSON --config worker/wrangler.jsonc < work
 | 生活分享 | `lifestyleSharing >= 0.60` | 日常、饮食、旅行、居家、宠物、家庭活动、穿搭、爱好或个人审美 |
 | 摄影分享 | `photographySharing >= 0.60` | 摄影作品、照片日记、风景、人像、街拍、构图、相机或修图，短标题也可以 |
 
-任何一个保留信号达到阈值，都会阻止“纯负面情绪宣泄”规则删除该帖子。明确广告、直播、屏蔽主题、商业营销、引战和群体对立仍然可以删除，不能通过挂上“生活分享”标签逃避过滤。
+保留信号用于记录和解释生活、摄影、经验分享，但不覆盖上述过滤规则。尤其是，以个人情绪表达为主要目的的生活或经验分享仍会移除；明确广告、直播、屏蔽主题、商业营销和各类对立内容也会移除。
 
 这意味着摄影作品和普通生活记录不再被迫满足“必须有知识或教程”的要求；真实经验分享也不要求一定有步骤或普遍适用。由于 Jev 看不到图片和视频，摄影内容仍需要标题、正文或分类中存在可识别线索；完全无法从文字和分类识别的视觉内容暂时不能可靠保护。
 
-信息价值 Score 只作为纯情绪宣泄的防误伤门槛；低分本身不会删除帖子，也不会再产生“信息价值低”原因。负面新闻、风险提示、诈骗预警、疾病科普、普通抱怨、困难经历和具体求助默认保留。标题为空但正文存在时仍由 Jev 判断；标题和正文同时为空时也默认保留，因为它仍可能是 Jev 看不到的纯摄影或视频内容。
+信息价值 Score 不再是删除条件，低分本身不会删除帖子，也不会产生“信息价值低”原因。个人情绪表达判断不区分正面或负面：开心、兴奋、难过、委屈、愤怒、焦虑等，只要表达自己的情绪或心情是帖子主要目的，就会移除。情绪只是顺带提及，而主体是事实、分析、方法、测评、创作展示或具体问题时，不按个人情绪表达移除。标题为空但正文存在时仍由 Jev 判断；标题和正文同时为空时默认保留，因为它仍可能是 Jev 看不到的纯摄影或视频内容。
+
+性别/家庭对立覆盖男女、夫妻、父母与子女、婆媳、代际和家庭阵营等关系。讨论这些话题本身不会触发过滤；只有通过群体刻板印象、集体归罪、蔑视、优劣论、敌对泛化或煽动站队来制造或加剧对立时才命中。
 
 Jev 无法查看 Feed 里的封面与视频。部分小红书首页 Feed 响应并不下发帖子正文（示例响应中的 `desc` 就全部为空），此时本次判断仍只能使用标题；脚本不会为了补正文而逐帖调用详情接口。
 
@@ -147,7 +150,7 @@ argument=endpoint=https%3A%2F%2Fxhs-jev-filter.example.workers.dev%2Ffilter&toke
 
 然后安装并启用该本地 Module。之前安装的 Shadowrocket HTTPS 解密证书和 `rec.xiaohongshu.com` MITM 配置可以继续使用。
 
-如果 GitHub 脚本更新后手机仍显示旧文案或旧行为，说明 Shadowrocket 还在使用已缓存的远程脚本。将个人 Module 中的 `script-path` 替换为公共 Module 当前提供的固定提交地址，然后停用并重新启用 Module。固定提交地址不会和旧版共用缓存；成功加载本版后，Shadowrocket 日志会包含 `scriptVersion=2026.09.23.2`。更新 `script-path` 时只替换 URL，保留个人 Module 中原有的 `endpoint`、`token`、`mode` 和其他参数。
+如果 GitHub 脚本更新后手机仍显示旧文案或旧行为，说明 Shadowrocket 还在使用已缓存的远程脚本。将个人 Module 中的 `script-path` 替换为公共 Module 当前提供的固定提交地址，然后停用并重新启用 Module。固定提交地址不会和旧版共用缓存；成功加载本版后，Shadowrocket 日志会包含 `scriptVersion=2026.09.23.3`。更新 `script-path` 时只替换 URL，保留个人 Module 中原有的 `endpoint`、`token`、`mode` 和其他参数。
 
 注意：Module 中的 `CLIENT_TOKEN` 不要提交到公开 GitHub。它不是 TypeSafe API Key，但泄露后别人可以消耗你的 Jev 调用额度。
 
@@ -175,7 +178,7 @@ mode=observe
 mode=filter
 ```
 
-正式过滤时，直播卡片和显式广告固定删除。其余由 Jev 判定的帖子默认至少保留 6 条，同时至少保留原 Feed 的 40%，避免语义判断一次删掉过多内容。Worker、Jev 或 JSON 处理失败时，脚本会原样放行该页。
+正式过滤时，直播、显式广告、屏蔽主题、商业营销、引战、群体对立、性别/家庭对立和个人情绪表达固定删除，不受最低保留数量影响。其他可选语义规则仍受至少保留 6 条和至少保留原 Feed 40% 的安全机制约束。Worker、Jev 或 JSON 处理失败时，脚本会原样放行该页。
 
 ## 6. 接口测试
 
@@ -193,7 +196,7 @@ curl "$FILTER_URL" \
 
 响应中的 `decisions[0].action` 应为 `keep` 或 `drop`，并包含各项概率、原因代码、模型版本和 token 用量。
 
-当前实现遵循 TypeSafe 的 System One 方式：把帖子字段组织为结构化 `state`，用一个 `Score` 判断信息价值，用多个原子 `Noul` 分别判断已启用的四个过滤信号、三个保留信号和可选屏蔽主题，再由 Worker 中的明确阈值组合最终结果。所有问题在一次请求中并行计算。`negativeNoise` 和 `engagementBait` 保留为可选实验信号，但默认关闭。模型固定为 `jev-1.13.0`，避免模型别名升级后让已经调好的阈值无提示漂移。
+当前实现遵循 TypeSafe 的 System One 方式：把帖子字段组织为结构化 `state`，用一个 `Score` 判断信息价值，用多个原子 `Noul` 分别判断已启用的五个过滤信号、三个保留信号和可选屏蔽主题，再由 Worker 中的明确阈值组合最终结果。“性别/家庭对立”和“个人情绪表达”各用一个独立 Noul，不混入模糊的低质量分类。所有问题在一次请求中并行计算。`negativeNoise` 和 `engagementBait` 保留为可选实验信号，但默认关闭。模型固定为 `jev-1.13.0`，避免模型别名升级后让已经调好的阈值无提示漂移。
 
 ## 7. 本地验证
 

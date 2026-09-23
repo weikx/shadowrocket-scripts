@@ -2,7 +2,7 @@
 
 > 文档类型：As-built（当前已实现方案）  
 > 更新时间：2026-09-23  
-> 策略版本：`6`
+> 策略版本：`7`
 > TypeSafe 模型：`jev-1.13.0`
 
 ## 1. 背景与目标
@@ -223,7 +223,8 @@ Content-Type: application/json
         "commercial": 0.02,
         "conflictBait": 0.05,
         "polarization": 0.01,
-        "emotionalVenting": 0.04,
+        "genderFamilyConflict": 0.03,
+        "personalEmotion": 0.04,
         "negativeNoise": 0.03,
         "engagementBait": 0.08
       },
@@ -238,7 +239,7 @@ Content-Type: application/json
     }
   ],
   "model": "jev-1.13.0",
-  "policyVersion": "6",
+  "policyVersion": "7",
   "durationMs": 719,
   "usage": {
     "input_tokens": 1047,
@@ -282,7 +283,8 @@ Worker 先在代码中处理不需要 AI 的情况：
 | `commercial_N` | Noul | `noul` | 判断主要目的是否为销售、推广或引流 |
 | `conflict_bait_N` | Noul | `noul` | 判断是否主要通过挑衅、羞辱或激怒他人来引战 |
 | `polarization_N` | Noul | `noul` | 判断是否用刻板印象、群体归罪或敌我叙事制造对立 |
-| `emotional_venting_N` | Noul | `noul` | 判断是否主要是缺少背景和反思的情绪宣泄 |
+| `gender_family_conflict_N` | Noul | `noul` | 判断是否有意制造或加剧男女、夫妻、婆媳、亲子、代际等对立 |
+| `personal_emotion_N` | Noul | `noul` | 判断表达作者自己的情绪或心情是否为帖子主要目的 |
 | `negative_noise_N` | Noul | `noul` | 可选实验信号；默认关闭，不参与请求或删除 |
 | `engagement_bait_N` | Noul | `noul` | 可选实验信号；默认关闭，不参与请求或删除 |
 | `experience_sharing_N` | Noul | `noul` | 判断是否为真实经历、过程、结果、测评、教训或个人叙述 |
@@ -328,7 +330,8 @@ Noul 没有独立的 `confidence` 字段，代码不会为它构造伪 confidenc
   "commercial": 0.8,
   "conflictBait": 0.82,
   "polarization": 0.82,
-  "emotionalVenting": 0.88,
+  "genderFamilyConflict": 0.65,
+  "personalEmotion": 0.65,
   "negativeNoise": 0.8,
   "engagementBait": 0.75,
   "experienceSharing": 0.55,
@@ -351,9 +354,10 @@ Noul 没有独立的 `confidence` 字段，代码不会为它构造伪 confidenc
 2. `commercial >= 0.80`，原因 `COMMERCIAL`；
 3. `conflictBait >= 0.82`，原因 `CONFLICT_BAIT`；
 4. `polarization >= 0.82`，原因 `POLARIZATION`；
-5. 没有保留保护、`contentValue <= 0.40`、`contentValueConfidence >= 0.60`，且 `emotionalVenting >= 0.88`，原因 `EMOTIONAL_VENTING`。
+5. `genderFamilyConflict >= 0.65`，原因 `GENDER_FAMILY_CONFLICT`；
+6. `personalEmotion >= 0.65`，原因 `PERSONAL_EMOTION`。
 
-其中第 2～4 条是硬语义规则：高概率营销、引战或群体对立即使同时属于生活、摄影或经验分享，也会过滤。第 5 条是唯一默认启用的软语义规则，会被三个正向保留信号覆盖。信息价值低不再单独删除；普通互动请求、标题党倾向和一般负面主题也不再单独删除。内容主题负面或语气激烈，并不自动等于垃圾；灾害预警、诈骗分析、疾病科普、风险分析、普通抱怨、困难经历和具体求助默认保留。
+第 2～6 条都是强制语义规则，即使帖子同时属于生活、摄影或经验分享，也会过滤。性别/家庭对立不因话题本身触发，必须体现制造敌对阵营的意图；个人情绪表达则不区分正负面，只要表达作者自己的心情是主要目的便触发。情绪只是顺带提及，而主体是事实、分析、教程、测评、创作展示或具体问题时不触发。信息价值低、普通互动请求、标题党倾向和一般负面主题不再单独删除。
 
 没有任何原因码时得到 `keep`。当前默认 `blockedTopics=[]`，因此未配置自定义策略时不会生成 `blocked_N` 问题。一个帖子可同时命中多个原因码，这正是使用多个独立 Noul 而不是互斥分类的目的。
 
@@ -390,7 +394,7 @@ keepScore = clamp(
 
 `mode=filter` 分两类处理：
 
-1. `AD_FLAG` 和 `LIVE_CARD`：固定删除，不受最低保留机制影响；
+1. `AD_FLAG`、`LIVE_CARD`、`BLOCKED_TOPIC`、`COMMERCIAL`、`CONFLICT_BAIT`、`POLARIZATION`、`GENDER_FAMILY_CONFLICT` 和 `PERSONAL_EMOTION`：固定删除，不受最低保留机制影响；
 2. 其他 Worker `drop`：按照 `keepScore` 从低到高删除，并受最低保留机制保护。
 
 最低保留数：
@@ -412,9 +416,9 @@ minimum = max(
 | 20 | 8 |
 | 30 | 12 |
 
-广告和直播先固定删除，因此它们较多时，最终数量允许低于上表目标。各类 Jev 语义原因产生的其他 `drop` 仍受最低保留保护；无文字卡片当前默认保留，不会产生 `NO_CONTENT`。
+上述强制原因先固定删除，因此它们较多时，最终数量允许低于上表目标。其他可选语义原因产生的 `drop` 仍受最低保留保护；无文字卡片当前默认保留，不会产生 `NO_CONTENT`。
 
-这意味着观察模式中的 `[❌应移除]` 是 Worker 的语义建议，不保证在过滤模式下全部真正删除；固定广告和直播除外。
+这意味着观察模式中的 `[❌应移除]` 对上述强制原因会在过滤模式中真正删除；仅默认关闭的可选软规则可能受到最低保留机制影响。
 
 ## 9. TypeSafe 集成设计依据
 
@@ -422,10 +426,10 @@ minimum = max(
 
 - **代码控制工作流**：拦截、鉴权、固定规则、阈值、排序和删除都由普通代码完成；
 - **结构化 state**：标题、正文、分类、内容类型和策略分别使用命名字段；
-- **原子问题**：内容价值、已启用的四个过滤信号和三个保留信号分别判断，避免一个模糊的“低质量”问题承担所有含义；
+- **原子问题**：内容价值、已启用的五个过滤信号和三个保留信号分别判断，性别/家庭对立与个人情绪表达也各自独立，避免一个模糊的“低质量”问题承担所有含义；
 - **一次并行请求**：同页全部独立问题一次提交，避免逐帖串行调用；
 - **正确使用 primitive**：程度使用 Score，是否成立使用 Noul；
-- **显式处理不确定性**：纯情绪宣泄只有在低内容价值且 Score confidence 足够高时才执行；
+- **显式阈值**：每个 Noul 的概率阈值由代码控制；性别/家庭对立和个人情绪表达当前均为 `0.65`；
 - **严格验证响应**：缺少答案、类型错误或数值无效时整次请求失败，不用默认值伪造结果；
 - **版本固定**：使用 `jev-1.13.0`，避免 `jev-latest` 更新后让阈值行为无提示漂移。
 
@@ -513,7 +517,7 @@ npx wrangler secret put FILTER_POLICY_JSON \
   --config worker/wrangler.jsonc < worker/policy.local.json
 ```
 
-策略覆盖继续兼容旧字段 `relevance` / `contentValue` 和 `relevanceConfidence` / `contentValueConfidence`，分别映射为 `maxContentValueForDrop` 和 `minContentValueConfidence`。旧 `filterCommercial: false` 也会映射为关闭 `enabledSignals.commercial`。其余旧版 `lowQuality` 阈值不再参与版本 6 判断。
+策略覆盖继续兼容旧字段 `relevance` / `contentValue` 和 `relevanceConfidence` / `contentValueConfidence`，分别映射为 `maxContentValueForDrop` 和 `minContentValueConfidence`。旧 `filterCommercial: false` 也会映射为关闭 `enabledSignals.commercial`；旧 `emotionalVenting` 开关和阈值映射为新的 `personalEmotion`。其余旧版 `lowQuality` 阈值不再参与版本 7 判断。
 
 请求中的 `schemaVersion: 1` 当前由客户端携带，但 Worker 尚未据此做版本分流或拒绝不兼容版本；这是后续协议演进时需要补齐的校验点。
 
@@ -531,13 +535,13 @@ npx wrangler secret put FILTER_POLICY_JSON \
 - 每帖问题索引和结构；
 - 广告、直播确定性删除，以及无文字卡片默认保留；
 - 空标题但有正文进入 Jev；
-- 策略版本 6、新信号开关和旧内容价值阈值字段兼容；
+- 策略版本 7、新信号开关和旧字段兼容；
 - 有信息价值的负面内容保留；
-- 纯低信息情绪宣泄产生一个准确原因码；
+- 个人情绪表达不受信息价值或保留信号保护；
 - 低信息价值单独出现时仍保留；
-- 经验、生活和摄影分享覆盖情绪宣泄软过滤原因；
+- 性别/家庭对立可独立于通用群体对立命中；
 - 正向保留信号不能覆盖广告、引战和群体对立；
-- 营销、引战和群体对立作为硬语义规则过滤；
+- 营销、引战、群体对立、性别/家庭对立和个人情绪表达作为强制语义规则过滤；
 - TypeSafe `429/529` 重试；
 - TypeSafe 漏回答案时返回失败。
 

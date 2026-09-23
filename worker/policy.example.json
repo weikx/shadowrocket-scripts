@@ -1,5 +1,5 @@
 {
-  "version": "6",
+  "version": "7",
   "blockedTopics": [],
   "highValueDescription": "帮助读者了解事实、理解问题或做出判断，提供明确的背景、解释、方法、步骤、数据、对比、可执行建议或可复用的一手经验",
   "contentValueCriteria": [
@@ -13,7 +13,8 @@
     "commercial": true,
     "conflictBait": true,
     "polarization": true,
-    "emotionalVenting": true,
+    "genderFamilyConflict": true,
+    "personalEmotion": true,
     "negativeNoise": false,
     "engagementBait": false
   },
@@ -30,9 +31,13 @@
       "true": "It divides identity or social groups into opposing camps and uses sweeping stereotypes, superiority or inferiority claims, collective blame, contempt, or hostility toward a group",
       "false": "It neutrally compares groups or discusses inequality, discrimination, demographics, or social conflict with evidence and nuance rather than promoting group hostility"
     },
-    "emotionalVenting": {
-      "true": "The post is almost entirely unprocessed anger, sadness, resentment, grievance, anxiety, or self-pity, and supplies virtually no concrete event, context, reflection, coping attempt, lesson, or request for specific help",
-      "false": "Keep ordinary complaints, diary-like feelings, personal hardship, requests for advice, and other negative expression when there is a concrete experience, context, reflection, coping attempt, lesson, or specific question"
+    "genderFamilyConflict": {
+      "true": "The post intentionally creates or intensifies antagonism between genders or family roles, including men versus women, husbands versus wives, parents versus children, mothers-in-law versus daughters-in-law, or one family group versus another, through group stereotypes, collective blame, contempt, superiority claims, hostile generalization, or calls to take sides",
+      "false": "The post discusses gender, marriage, parenting, intergenerational relations, or a family dispute without trying to turn people into hostile camps. A specific personal conflict, factual analysis, advice, or nuanced criticism is not group antagonism by topic alone"
+    },
+    "personalEmotion": {
+      "true": "Expressing the author's own emotion, mood, or emotional state is a primary purpose of the post, including happiness, sadness, anger, grievance, anxiety, loneliness, fear, frustration, self-pity, excitement, or diary-like emotional expression",
+      "false": "The post may mention a feeling incidentally, but its primary purpose is to report facts, explain or analyze something, ask a concrete question, provide advice, review an experience, teach a method, or present creative work rather than express the author's emotion"
     },
     "negativeNoise": {
       "true": "The primary effect is to amplify fear, anger, shame, anxiety, despair, humiliation, or catastrophizing without enough factual context, analysis, verification, or useful guidance",
@@ -67,7 +72,8 @@
     "commercial": 0.8,
     "conflictBait": 0.82,
     "polarization": 0.82,
-    "emotionalVenting": 0.88,
+    "genderFamilyConflict": 0.65,
+    "personalEmotion": 0.65,
     "negativeNoise": 0.8,
     "engagementBait": 0.75,
     "experienceSharing": 0.55,

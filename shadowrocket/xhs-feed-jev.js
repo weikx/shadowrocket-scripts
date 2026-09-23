@@ -12,7 +12,7 @@
  */
 
 (function () {
-  var SCRIPT_VERSION = "2026.09.23.2";
+  var SCRIPT_VERSION = "2026.09.23.3";
   var DEFAULT_CONFIG = {
     endpoint: "",
     token: "",
@@ -29,6 +29,8 @@
     COMMERCIAL: "商业营销",
     CONFLICT_BAIT: "引战",
     POLARIZATION: "群体对立",
+    GENDER_FAMILY_CONFLICT: "性别或家庭对立",
+    PERSONAL_EMOTION: "个人情绪表达",
     EMOTIONAL_VENTING: "情绪宣泄",
     NEGATIVE_NOISE: "负面噪音",
     ENGAGEMENT_BAIT: "互动诱导",
@@ -236,12 +238,22 @@
       Math.min(config.minKeep, payload.data.length),
       Math.ceil(payload.data.length * config.minKeepRatio)
     );
+    var mandatoryReasonCodes = {
+      AD_FLAG: true,
+      LIVE_CARD: true,
+      BLOCKED_TOPIC: true,
+      COMMERCIAL: true,
+      CONFLICT_BAIT: true,
+      POLARIZATION: true,
+      GENDER_FAMILY_CONFLICT: true,
+      PERSONAL_EMOTION: true
+    };
     var deterministicDrops = decisions.filter(function (decision) {
       return (
         decision.action === "drop" &&
         Array.isArray(decision.reasonCodes) &&
         decision.reasonCodes.some(function (reason) {
-          return reason === "AD_FLAG" || reason === "LIVE_CARD";
+          return mandatoryReasonCodes[String(reason)] === true;
         })
       );
     });

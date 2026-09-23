@@ -25,7 +25,8 @@ const signalAnswerNames = [
   "commercial",
   "conflict_bait",
   "polarization",
-  "emotional_venting",
+  "gender_family_conflict",
+  "personal_emotion",
   "negative_noise",
   "engagement_bait"
 ];
@@ -110,7 +111,8 @@ test("questions are atomic and include the post index in instructions", () => {
     "commercial_0",
     "conflict_bait_0",
     "polarization_0",
-    "emotional_venting_0",
+    "gender_family_conflict_0",
+    "personal_emotion_0",
     "experience_sharing_0",
     "lifestyle_sharing_0",
     "photography_sharing_0"
@@ -192,7 +194,7 @@ test("strict defaults remove live cards and never send author names to Jev", asy
     category: "Unknown category",
     contentType: "normal"
   });
-  assert.equal(Object.keys(requestPayload.questions).length, 24);
+  assert.equal(Object.keys(requestPayload.questions).length, 27);
   assert.deepEqual(
     result.decisions.map(({ key, action, reasonCodes }) => ({ key, action, reasonCodes })),
     [
@@ -212,17 +214,19 @@ test("strict defaults remove live cards and never send author names to Jev", asy
 
 test("focused defaults only enable the requested removal categories", () => {
   const policy = parsePolicy();
-  assert.equal(policy.version, "6");
+  assert.equal(policy.version, "7");
   assert.equal(policy.enabledSignals.commercial, true);
   assert.equal(policy.enabledSignals.conflictBait, true);
   assert.equal(policy.enabledSignals.polarization, true);
-  assert.equal(policy.enabledSignals.emotionalVenting, true);
+  assert.equal(policy.enabledSignals.genderFamilyConflict, true);
+  assert.equal(policy.enabledSignals.personalEmotion, true);
   assert.equal(policy.enabledSignals.negativeNoise, false);
   assert.equal(policy.enabledSignals.engagementBait, false);
   assert.equal(policy.thresholds.commercial, 0.8);
   assert.equal(policy.thresholds.conflictBait, 0.82);
   assert.equal(policy.thresholds.polarization, 0.82);
-  assert.equal(policy.thresholds.emotionalVenting, 0.88);
+  assert.equal(policy.thresholds.genderFamilyConflict, 0.65);
+  assert.equal(policy.thresholds.personalEmotion, 0.65);
   assert.equal(policy.thresholds.negativeNoise, 0.8);
   assert.equal(policy.thresholds.engagementBait, 0.75);
   assert.equal(policy.thresholds.experienceSharing, 0.55);
@@ -249,7 +253,7 @@ test("negative topics are kept when they contain reliable information", async (t
         answers: modelAnswers(0, {
           contentValue: 2.8,
           contentValueConfidence: 0.9,
-          emotional_venting: 0.92,
+          personal_emotion: 0.05,
           negative_noise: 0.95,
           engagement_bait: 0.88
         }),
@@ -281,16 +285,16 @@ test("negative topics are kept when they contain reliable information", async (t
   assert.equal(result.decisions[0].signals.negativeNoise, 0);
 });
 
-test("pure low-information emotional venting is removed with one precise reason", async (t) => {
+test("personal emotion is removed even when information value is high", async (t) => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(
       JSON.stringify({
         model: "jev-1.13.0",
         answers: modelAnswers(0, {
-          contentValue: 0.6,
+          contentValue: 2.7,
           contentValueConfidence: 0.9,
-          emotional_venting: 0.91,
+          personal_emotion: 0.91,
           negative_noise: 0.93
         }),
         usage: { input_tokens: 100, output_tokens: 20 }
@@ -317,7 +321,7 @@ test("pure low-information emotional venting is removed with one precise reason"
 
   assert.equal(response.status, 200);
   assert.equal(result.decisions[0].action, "drop");
-  assert.deepEqual(result.decisions[0].reasonCodes, ["EMOTIONAL_VENTING"]);
+  assert.deepEqual(result.decisions[0].reasonCodes, ["PERSONAL_EMOTION"]);
 });
 
 test("low information value alone never removes a post", async (t) => {
@@ -366,7 +370,7 @@ test("uncertain low information score does not remove a post by itself", async (
         answers: modelAnswers(0, {
           contentValue: 0.6,
           contentValueConfidence: 0.2,
-          emotional_venting: 0.95,
+          personal_emotion: 0.05,
           negative_noise: 0.95,
           engagement_bait: 0.95
         }),
@@ -397,7 +401,7 @@ test("uncertain low information score does not remove a post by itself", async (
   assert.deepEqual(result.decisions[0].reasonCodes, []);
 });
 
-test("experience, lifestyle, and photography sharing override low-value soft filters", async (t) => {
+test("experience, lifestyle, and photography sharing remain protected from disabled soft filters", async (t) => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(
@@ -407,7 +411,7 @@ test("experience, lifestyle, and photography sharing override low-value soft fil
           ...modelAnswers(0, {
             contentValue: 0.6,
             contentValueConfidence: 0.9,
-            emotional_venting: 0.9,
+            personal_emotion: 0.05,
             negative_noise: 0.9,
             engagement_bait: 0.9,
             experience_sharing: 0.82
@@ -520,6 +524,88 @@ test("preserve signals do not override conflict bait or polarization", async (t)
   assert.deepEqual(result.decisions[0].keepReasonCodes, ["LIFESTYLE_SHARING"]);
 });
 
+test("gender or family antagonism is filtered independently of generic polarization", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: modelAnswers(0, {
+          contentValue: 2.8,
+          polarization: 0.2,
+          gender_family_conflict: 0.72,
+          experience_sharing: 0.9
+        }),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "男女必须选边站",
+        content: "把所有男性和女性划成敌对阵营并互相归罪。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(result.decisions[0].action, "drop");
+  assert.deepEqual(result.decisions[0].reasonCodes, ["GENDER_FAMILY_CONFLICT"]);
+});
+
+test("personal emotion is not protected by experience or lifestyle sharing", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: modelAnswers(0, {
+          contentValue: 2.5,
+          personal_emotion: 0.8,
+          experience_sharing: 0.9,
+          lifestyle_sharing: 0.9
+        }),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "今天真的好委屈",
+        content: "记录我现在的难过和焦虑。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(result.decisions[0].action, "drop");
+  assert.deepEqual(result.decisions[0].reasonCodes, ["PERSONAL_EMOTION"]);
+  assert.deepEqual(result.decisions[0].keepReasonCodes, [
+    "EXPERIENCE_SHARING",
+    "LIFESTYLE_SHARING"
+  ]);
+});
+
 test("commercial, conflict bait, and polarization are hard filter signals", async (t) => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -594,7 +680,8 @@ test("disabled semantic signals are neither asked nor required", async (t) => {
             "commercial",
             "conflictBait",
             "polarization",
-            "emotionalVenting",
+            "genderFamilyConflict",
+            "personalEmotion",
             "negativeNoise",
             "engagementBait"
           ].map((key) => [key, false])

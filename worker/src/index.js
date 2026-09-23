@@ -4,7 +4,8 @@ const SIGNAL_KEYS = Object.freeze([
   "commercial",
   "conflictBait",
   "polarization",
-  "emotionalVenting",
+  "genderFamilyConflict",
+  "personalEmotion",
   "negativeNoise",
   "engagementBait"
 ]);
@@ -30,10 +31,15 @@ const SIGNAL_RULES = Object.freeze({
     reasonCode: "POLARIZATION",
     requiresLowInformationValue: false
   }),
-  emotionalVenting: Object.freeze({
-    answerPrefix: "emotional_venting",
-    reasonCode: "EMOTIONAL_VENTING",
-    requiresLowInformationValue: true
+  genderFamilyConflict: Object.freeze({
+    answerPrefix: "gender_family_conflict",
+    reasonCode: "GENDER_FAMILY_CONFLICT",
+    requiresLowInformationValue: false
+  }),
+  personalEmotion: Object.freeze({
+    answerPrefix: "personal_emotion",
+    reasonCode: "PERSONAL_EMOTION",
+    requiresLowInformationValue: false
   }),
   negativeNoise: Object.freeze({
     answerPrefix: "negative_noise",
@@ -88,11 +94,17 @@ const DEFAULT_SIGNAL_DEFINITIONS = Object.freeze({
     false:
       "It neutrally compares groups or discusses inequality, discrimination, demographics, or social conflict with evidence and nuance rather than promoting group hostility"
   },
-  emotionalVenting: {
+  genderFamilyConflict: {
     true:
-      "The post is almost entirely unprocessed anger, sadness, resentment, grievance, anxiety, or self-pity, and supplies virtually no concrete event, context, reflection, coping attempt, lesson, or request for specific help",
+      "The post intentionally creates or intensifies antagonism between genders or family roles, including men versus women, husbands versus wives, parents versus children, mothers-in-law versus daughters-in-law, or one family group versus another, through group stereotypes, collective blame, contempt, superiority claims, hostile generalization, or calls to take sides",
     false:
-      "Keep ordinary complaints, diary-like feelings, personal hardship, requests for advice, and other negative expression when there is a concrete experience, context, reflection, coping attempt, lesson, or specific question"
+      "The post discusses gender, marriage, parenting, intergenerational relations, or a family dispute without trying to turn people into hostile camps. A specific personal conflict, factual analysis, advice, or nuanced criticism is not group antagonism by topic alone"
+  },
+  personalEmotion: {
+    true:
+      "Expressing the author's own emotion, mood, or emotional state is a primary purpose of the post, including happiness, sadness, anger, grievance, anxiety, loneliness, fear, frustration, self-pity, excitement, or diary-like emotional expression",
+    false:
+      "The post may mention a feeling incidentally, but its primary purpose is to report facts, explain or analyze something, ask a concrete question, provide advice, review an experience, teach a method, or present creative work rather than express the author's emotion"
   },
   negativeNoise: {
     true:
@@ -130,7 +142,7 @@ const DEFAULT_PRESERVE_SIGNAL_DEFINITIONS = Object.freeze({
 });
 
 const DEFAULT_POLICY = Object.freeze({
-  version: "6",
+  version: "7",
   blockedTopics: [],
   highValueDescription:
     "帮助读者了解事实、理解问题或做出判断，提供明确的背景、解释、方法、步骤、数据、对比、可执行建议或可复用的一手经验",
@@ -140,7 +152,8 @@ const DEFAULT_POLICY = Object.freeze({
     commercial: true,
     conflictBait: true,
     polarization: true,
-    emotionalVenting: true,
+    genderFamilyConflict: true,
+    personalEmotion: true,
     negativeNoise: false,
     engagementBait: false
   }),
@@ -156,7 +169,8 @@ const DEFAULT_POLICY = Object.freeze({
     commercial: 0.8,
     conflictBait: 0.82,
     polarization: 0.82,
-    emotionalVenting: 0.88,
+    genderFamilyConflict: 0.65,
+    personalEmotion: 0.65,
     negativeNoise: 0.8,
     engagementBait: 0.75,
     experienceSharing: 0.55,
@@ -252,7 +266,13 @@ function parsePolicy(raw) {
       commercial:
         typeof custom.enabledSignals?.commercial === "boolean"
           ? custom.enabledSignals.commercial
-          : custom.filterCommercial !== false
+          : custom.filterCommercial !== false,
+      personalEmotion:
+        typeof custom.enabledSignals?.personalEmotion === "boolean"
+          ? custom.enabledSignals.personalEmotion
+          : typeof custom.enabledSignals?.emotionalVenting === "boolean"
+            ? custom.enabledSignals.emotionalVenting
+            : DEFAULT_POLICY.enabledSignals.personalEmotion
     },
     signalDefinitions: parseSignalDefinitions(
       custom.signalDefinitions,
@@ -285,10 +305,19 @@ function parsePolicy(raw) {
       polarization: clamp(
         finiteNumber(thresholds.polarization, DEFAULT_POLICY.thresholds.polarization)
       ),
-      emotionalVenting: clamp(
+      genderFamilyConflict: clamp(
         finiteNumber(
-          thresholds.emotionalVenting,
-          DEFAULT_POLICY.thresholds.emotionalVenting
+          thresholds.genderFamilyConflict,
+          DEFAULT_POLICY.thresholds.genderFamilyConflict
+        )
+      ),
+      personalEmotion: clamp(
+        finiteNumber(
+          thresholds.personalEmotion,
+          finiteNumber(
+            thresholds.emotionalVenting,
+            DEFAULT_POLICY.thresholds.personalEmotion
+          )
         )
       ),
       negativeNoise: clamp(
@@ -372,7 +401,7 @@ function buildState(posts, policy) {
   return {
     language: "Chinese social-media posts; judge the supplied text as written",
     evaluationGoal:
-      "Only clearly commercial promotion, deliberate conflict bait, hostile group polarization, or pure low-information emotional venting are candidates for semantic removal. Keep ordinary posts by default, including questions, opinions, entertainment, genuine first-hand experiences, personal lifestyle sharing, and photography or visual-creation sharing. Judge information utility separately from whether the topic or emotion is positive or negative.",
+      "Remove clearly commercial promotion, deliberate conflict bait, hostile group polarization, intentional gender or family-role antagonism, and posts primarily devoted to the author's own emotion. Otherwise keep ordinary posts by default, including questions, opinions, entertainment, genuine first-hand experiences, personal lifestyle sharing, and photography or visual-creation sharing. Judge each removal condition separately.",
     evidenceLimit:
       "Judge only the supplied title, content, category, and content type. Consider title and content together; either field may be empty. Do not penalize a missing title when the content itself provides useful evidence. Do not use or infer author identity. Do not infer unseen image, video, or other details.",
     policy: {
@@ -453,8 +482,12 @@ function buildQuestions(posts, policy) {
       "Does the post promote hostile us-versus-them framing or sweeping antagonistic claims about identity or social groups?"
     );
     addSignalQuestion(
-      "emotionalVenting",
-      "Is the post mainly emotional venting or grievance without enough concrete context, reflection, or reusable insight?"
+      "genderFamilyConflict",
+      "Is the post intentionally creating or intensifying antagonism between genders or family roles?"
+    );
+    addSignalQuestion(
+      "personalEmotion",
+      "Is expressing the author's own emotion or mood a primary purpose of the post?"
     );
     addSignalQuestion(
       "negativeNoise",
