@@ -59,15 +59,53 @@ function runScript(mode, decisions, customizeInput) {
 
 test("observe mode marks decisions without deleting feed items", async () => {
   const { value, requestBody } = await runScript("observe", [
-    { key: "0", action: "drop", keepScore: 0.13 },
+    {
+      key: "0",
+      action: "drop",
+      keepScore: 0.13,
+      reasonCodes: ["NEGATIVE_NOISE", "LOW_INFORMATION_VALUE"]
+    },
     { key: "1", action: "keep", keepScore: 0.86 }
   ]);
   const output = JSON.parse(value.body);
   assert.equal(output.data.length, 10);
-  assert.equal(output.data[0].user.nickname, "[❌移除] 作者 0");
-  assert.equal(output.data[1].user.nickname, "[✅保留] 作者 1");
+  assert.equal(output.data[0].user.nickname, "[❌应移除] 作者 0");
+  assert.equal(output.data[1].user.nickname, "[✅应保留] 作者 1");
+  assert.equal(
+    output.data[0].title,
+    "[移除原因：负面噪音、信息价值低] 标题 0"
+  );
+  assert.equal(output.data[1].title, "标题 1");
   assert.equal("author" in requestBody.items[0], false);
   assert.doesNotMatch(JSON.stringify(requestBody), /作者/);
+});
+
+test("observe mode shows deterministic and fallback removal reasons in titles", async () => {
+  const { value } = await runScript("observe", [
+    { key: "0", action: "drop", reasonCodes: ["AD_FLAG"] },
+    { key: "1", action: "drop", reasonCodes: ["CONFLICT_BAIT"] },
+    { key: "2", action: "drop", reasonCodes: [] },
+    { key: "3", action: "drop", reasonCodes: ["FUTURE_REASON"] }
+  ]);
+  const output = JSON.parse(value.body);
+
+  assert.equal(output.data[0].title, "[移除原因：显式广告] 标题 0");
+  assert.equal(output.data[1].title, "[移除原因：引战] 标题 1");
+  assert.equal(output.data[2].title, "[移除原因：未提供原因] 标题 2");
+  assert.equal(output.data[3].title, "[移除原因：FUTURE_REASON] 标题 3");
+});
+
+test("observe mode writes a reason title when the original title is empty", async () => {
+  const { value } = await runScript(
+    "observe",
+    [{ key: "0", action: "drop", reasonCodes: ["NO_CONTENT"] }],
+    (input) => {
+      input.data[0].title = "";
+    }
+  );
+  const output = JSON.parse(value.body);
+
+  assert.equal(output.data[0].title, "[移除原因：缺少标题和正文] 无标题");
 });
 
 test("sends available post content separately from the title", async () => {

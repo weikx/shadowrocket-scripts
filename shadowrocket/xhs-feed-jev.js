@@ -20,6 +20,19 @@
     minKeep: 6,
     minKeepRatio: 0.4
   };
+  var REASON_LABELS = {
+    AD_FLAG: "显式广告",
+    LIVE_CARD: "直播内容",
+    NO_CONTENT: "缺少标题和正文",
+    BLOCKED_TOPIC: "命中屏蔽主题",
+    COMMERCIAL: "商业营销",
+    CONFLICT_BAIT: "引战",
+    POLARIZATION: "群体对立",
+    EMOTIONAL_VENTING: "情绪宣泄",
+    NEGATIVE_NOISE: "负面噪音",
+    ENGAGEMENT_BAIT: "互动诱导",
+    LOW_INFORMATION_VALUE: "信息价值低"
+  };
   var finished = false;
   var timeoutId = null;
 
@@ -159,6 +172,47 @@
     }
   }
 
+  function prependTitle(item, prefix) {
+    var updated = false;
+    var targets = [
+      item && item.live ? [item.live, "name"] : null,
+      [item, "title"],
+      [item, "display_title"],
+      [item, "name"],
+      item && item.note ? [item.note, "title"] : null,
+      item && item.note ? [item.note, "display_title"] : null,
+      item && item.note_card ? [item.note_card, "title"] : null,
+      item && item.note_card ? [item.note_card, "display_title"] : null,
+      item && item.note_info ? [item.note_info, "title"] : null,
+      item && item.note_info ? [item.note_info, "display_title"] : null
+    ];
+
+    targets.forEach(function (target) {
+      if (!target || !target[0] || typeof target[0][target[1]] !== "string") return;
+      var original = target[0][target[1]].trim();
+      if (!original) return;
+      target[0][target[1]] = prefix + " " + original;
+      updated = true;
+    });
+
+    if (!updated && item && typeof item === "object") {
+      item.title = prefix + " 无标题";
+    }
+  }
+
+  function removalReason(decision) {
+    if (!decision || !Array.isArray(decision.reasonCodes)) {
+      return "未提供原因";
+    }
+
+    var labels = [];
+    decision.reasonCodes.forEach(function (reasonCode) {
+      var label = REASON_LABELS[String(reasonCode)] || String(reasonCode || "");
+      if (label && labels.indexOf(label) < 0) labels.push(label);
+    });
+    return labels.length ? labels.join("、") : "未提供原因";
+  }
+
   function observe(payload, decisions) {
     decisions.forEach(function (decision) {
       var index = Number(decision.key);
@@ -166,8 +220,12 @@
       if (!item) return;
 
       var original = itemAuthor(item) || "未知作者";
-      var marker = decision.action === "drop" ? "❌移除" : "✅保留";
+      var shouldDrop = decision.action === "drop";
+      var marker = shouldDrop ? "❌应移除" : "✅应保留";
       setNickname(item, "[" + marker + "] " + original);
+      if (shouldDrop) {
+        prependTitle(item, "[移除原因：" + removalReason(decision) + "]");
+      }
     });
     return 0;
   }
