@@ -1,5 +1,7 @@
 # 小红书 Feed Jev 过滤器
 
+当前系统的完整架构、数据流、判断算法、安全边界和失败策略见 [`technical-solution.md`](./technical-solution.md)。
+
 这个版本由两个部分组成：
 
 1. Shadowrocket 脚本读取小红书 Feed，只提取接口实际返回的标题、正文、分类、内容类型和广告标记；作者昵称不会上传，也不参与判断。
@@ -72,9 +74,9 @@ curl https://xhs-jev-filter.<你的 Cloudflare 子域>.workers.dev/health
 cp worker/policy.example.json worker/policy.local.json
 ```
 
-编辑 `worker/policy.local.json`，至少填写：
+编辑 `worker/policy.local.json`，可调整：
 
-- `interests`：希望看到的主题。
+- `interests`：兼容预留字段；当前“只按内容质量判断”的版本不使用它做主题匹配。
 - `blockedTopics`：明确不想看到的主题。
 - `highValueDescription`：你认为有价值的内容标准。
 - `lowValueDescription`：你认为低质量的内容标准。
