@@ -90,9 +90,9 @@ const DEFAULT_SIGNAL_DEFINITIONS = Object.freeze({
   },
   emotionalVenting: {
     true:
-      "The post is mainly unprocessed anger, sadness, resentment, grievance, anxiety, or self-pity, with little concrete context, reflection, lesson, or reusable insight",
+      "The post is almost entirely unprocessed anger, sadness, resentment, grievance, anxiety, or self-pity, and supplies virtually no concrete event, context, reflection, coping attempt, lesson, or request for specific help",
     false:
-      "It may express emotion, but also provides concrete experience, reflection, explanation, coping methods, or information useful to another reader"
+      "Keep ordinary complaints, diary-like feelings, personal hardship, requests for advice, and other negative expression when there is a concrete experience, context, reflection, coping attempt, lesson, or specific question"
   },
   negativeNoise: {
     true:
@@ -130,7 +130,7 @@ const DEFAULT_PRESERVE_SIGNAL_DEFINITIONS = Object.freeze({
 });
 
 const DEFAULT_POLICY = Object.freeze({
-  version: "5",
+  version: "6",
   blockedTopics: [],
   highValueDescription:
     "帮助读者了解事实、理解问题或做出判断，提供明确的背景、解释、方法、步骤、数据、对比、可执行建议或可复用的一手经验",
@@ -141,8 +141,8 @@ const DEFAULT_POLICY = Object.freeze({
     conflictBait: true,
     polarization: true,
     emotionalVenting: true,
-    negativeNoise: true,
-    engagementBait: true
+    negativeNoise: false,
+    engagementBait: false
   }),
   signalDefinitions: DEFAULT_SIGNAL_DEFINITIONS,
   enabledPreserveSignals: Object.freeze({
@@ -153,17 +153,17 @@ const DEFAULT_POLICY = Object.freeze({
   preserveSignalDefinitions: DEFAULT_PRESERVE_SIGNAL_DEFINITIONS,
   thresholds: {
     blockedTopic: 0.8,
-    commercial: 0.75,
-    conflictBait: 0.7,
-    polarization: 0.7,
-    emotionalVenting: 0.8,
+    commercial: 0.8,
+    conflictBait: 0.82,
+    polarization: 0.82,
+    emotionalVenting: 0.88,
     negativeNoise: 0.8,
     engagementBait: 0.75,
     experienceSharing: 0.55,
     lifestyleSharing: 0.6,
     photographySharing: 0.6,
-    maxContentValueForDrop: 0.45,
-    minContentValueConfidence: 0.4
+    maxContentValueForDrop: 0.4,
+    minContentValueConfidence: 0.6
   }
 });
 
@@ -372,7 +372,7 @@ function buildState(posts, policy) {
   return {
     language: "Chinese social-media posts; judge the supplied text as written",
     evaluationGoal:
-      "Keep posts that help a reader learn facts, understand a situation, solve a problem, or make a decision. Also preserve genuine first-hand experiences, personal lifestyle sharing, and photography or visual-creation sharing even when they are not broadly instructional. Judge information utility separately from whether the topic or emotion is positive or negative.",
+      "Only clearly commercial promotion, deliberate conflict bait, hostile group polarization, or pure low-information emotional venting are candidates for semantic removal. Keep ordinary posts by default, including questions, opinions, entertainment, genuine first-hand experiences, personal lifestyle sharing, and photography or visual-creation sharing. Judge information utility separately from whether the topic or emotion is positive or negative.",
     evidenceLimit:
       "Judge only the supplied title, content, category, and content type. Consider title and content together; either field may be empty. Do not penalize a missing title when the content itself provides useful evidence. Do not use or infer author identity. Do not infer unseen image, video, or other details.",
     policy: {
@@ -575,10 +575,6 @@ function makeModelDecision(item, index, answers, policy) {
     }
     reasonCodes.push(rule.reasonCode);
   });
-  if (hasReliableLowInformationValue && !isProtectedSharing) {
-    reasonCodes.push("LOW_INFORMATION_VALUE");
-  }
-
   const strongestRisk = Math.max(blocked, ...Object.values(signals));
 
   const keepScore = clamp(
@@ -623,6 +619,24 @@ function makeRuleDecision(item, reasonCode, overrides = {}) {
     ),
     blocked: 0,
     reasonCodes: [reasonCode],
+    keepReasonCodes: []
+  };
+}
+
+function makeRuleKeepDecision(item) {
+  return {
+    key: item.key,
+    action: "keep",
+    evaluation: "rule",
+    keepScore: 1,
+    contentValue: 0,
+    contentValueConfidence: 0,
+    signals: Object.fromEntries(SIGNAL_KEYS.map((key) => [key, 0])),
+    preserveSignals: Object.fromEntries(
+      PRESERVE_SIGNAL_KEYS.map((key) => [key, 0])
+    ),
+    blocked: 0,
+    reasonCodes: [],
     keepReasonCodes: []
   };
 }
@@ -690,7 +704,9 @@ async function filterItems(items, policy, env) {
     }
 
     if (!item.title && !item.content) {
-      decisions[inputIndex] = makeRuleDecision(item, "NO_CONTENT");
+      // The feed card can still contain useful unseen photography or video.
+      // With no textual evidence, default to keeping it instead of guessing.
+      decisions[inputIndex] = makeRuleKeepDecision(item);
       return;
     }
 

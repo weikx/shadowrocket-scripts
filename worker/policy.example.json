@@ -1,5 +1,5 @@
 {
-  "version": "5",
+  "version": "6",
   "blockedTopics": [],
   "highValueDescription": "帮助读者了解事实、理解问题或做出判断，提供明确的背景、解释、方法、步骤、数据、对比、可执行建议或可复用的一手经验",
   "contentValueCriteria": [
@@ -14,8 +14,8 @@
     "conflictBait": true,
     "polarization": true,
     "emotionalVenting": true,
-    "negativeNoise": true,
-    "engagementBait": true
+    "negativeNoise": false,
+    "engagementBait": false
   },
   "signalDefinitions": {
     "commercial": {
@@ -31,8 +31,8 @@
       "false": "It neutrally compares groups or discusses inequality, discrimination, demographics, or social conflict with evidence and nuance rather than promoting group hostility"
     },
     "emotionalVenting": {
-      "true": "The post is mainly unprocessed anger, sadness, resentment, grievance, anxiety, or self-pity, with little concrete context, reflection, lesson, or reusable insight",
-      "false": "It may express emotion, but also provides concrete experience, reflection, explanation, coping methods, or information useful to another reader"
+      "true": "The post is almost entirely unprocessed anger, sadness, resentment, grievance, anxiety, or self-pity, and supplies virtually no concrete event, context, reflection, coping attempt, lesson, or request for specific help",
+      "false": "Keep ordinary complaints, diary-like feelings, personal hardship, requests for advice, and other negative expression when there is a concrete experience, context, reflection, coping attempt, lesson, or specific question"
     },
     "negativeNoise": {
       "true": "The primary effect is to amplify fear, anger, shame, anxiety, despair, humiliation, or catastrophizing without enough factual context, analysis, verification, or useful guidance",
@@ -64,16 +64,16 @@
   },
   "thresholds": {
     "blockedTopic": 0.8,
-    "commercial": 0.75,
-    "conflictBait": 0.7,
-    "polarization": 0.7,
-    "emotionalVenting": 0.8,
+    "commercial": 0.8,
+    "conflictBait": 0.82,
+    "polarization": 0.82,
+    "emotionalVenting": 0.88,
     "negativeNoise": 0.8,
     "engagementBait": 0.75,
     "experienceSharing": 0.55,
     "lifestyleSharing": 0.6,
     "photographySharing": 0.6,
-    "maxContentValueForDrop": 0.45,
-    "minContentValueConfidence": 0.4
+    "maxContentValueForDrop": 0.4,
+    "minContentValueConfidence": 0.6
   }
 }

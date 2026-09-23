@@ -111,8 +111,6 @@ test("questions are atomic and include the post index in instructions", () => {
     "conflict_bait_0",
     "polarization_0",
     "emotional_venting_0",
-    "negative_noise_0",
-    "engagement_bait_0",
     "experience_sharing_0",
     "lifestyle_sharing_0",
     "photography_sharing_0"
@@ -194,38 +192,44 @@ test("strict defaults remove live cards and never send author names to Jev", asy
     category: "Unknown category",
     contentType: "normal"
   });
-  assert.equal(Object.keys(requestPayload.questions).length, 30);
+  assert.equal(Object.keys(requestPayload.questions).length, 24);
   assert.deepEqual(
     result.decisions.map(({ key, action, reasonCodes }) => ({ key, action, reasonCodes })),
     [
       { key: "0", action: "drop", reasonCodes: ["AD_FLAG"] },
       {
         key: "1",
-        action: "drop",
-        reasonCodes: ["ENGAGEMENT_BAIT", "LOW_INFORMATION_VALUE"]
+        action: "keep",
+        reasonCodes: []
       },
       { key: "2", action: "keep", reasonCodes: [] },
       { key: "3", action: "drop", reasonCodes: ["LIVE_CARD"] },
       { key: "4", action: "keep", reasonCodes: [] },
-      { key: "5", action: "drop", reasonCodes: ["NO_CONTENT"] }
+      { key: "5", action: "keep", reasonCodes: [] }
     ]
   );
 });
 
-test("strict default thresholds are more selective", () => {
+test("focused defaults only enable the requested removal categories", () => {
   const policy = parsePolicy();
-  assert.equal(policy.version, "5");
-  assert.equal(policy.thresholds.commercial, 0.75);
-  assert.equal(policy.thresholds.conflictBait, 0.7);
-  assert.equal(policy.thresholds.polarization, 0.7);
-  assert.equal(policy.thresholds.emotionalVenting, 0.8);
+  assert.equal(policy.version, "6");
+  assert.equal(policy.enabledSignals.commercial, true);
+  assert.equal(policy.enabledSignals.conflictBait, true);
+  assert.equal(policy.enabledSignals.polarization, true);
+  assert.equal(policy.enabledSignals.emotionalVenting, true);
+  assert.equal(policy.enabledSignals.negativeNoise, false);
+  assert.equal(policy.enabledSignals.engagementBait, false);
+  assert.equal(policy.thresholds.commercial, 0.8);
+  assert.equal(policy.thresholds.conflictBait, 0.82);
+  assert.equal(policy.thresholds.polarization, 0.82);
+  assert.equal(policy.thresholds.emotionalVenting, 0.88);
   assert.equal(policy.thresholds.negativeNoise, 0.8);
   assert.equal(policy.thresholds.engagementBait, 0.75);
   assert.equal(policy.thresholds.experienceSharing, 0.55);
   assert.equal(policy.thresholds.lifestyleSharing, 0.6);
   assert.equal(policy.thresholds.photographySharing, 0.6);
-  assert.equal(policy.thresholds.maxContentValueForDrop, 0.45);
-  assert.equal(policy.thresholds.minContentValueConfidence, 0.4);
+  assert.equal(policy.thresholds.maxContentValueForDrop, 0.4);
+  assert.equal(policy.thresholds.minContentValueConfidence, 0.6);
 });
 
 test("legacy relevance threshold names remain compatible", () => {
@@ -274,10 +278,10 @@ test("negative topics are kept when they contain reliable information", async (t
   assert.equal(response.status, 200);
   assert.equal(result.decisions[0].action, "keep");
   assert.deepEqual(result.decisions[0].reasonCodes, []);
-  assert.equal(result.decisions[0].signals.negativeNoise, 0.95);
+  assert.equal(result.decisions[0].signals.negativeNoise, 0);
 });
 
-test("low-information negative noise is removed with explicit reasons", async (t) => {
+test("pure low-information emotional venting is removed with one precise reason", async (t) => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(
@@ -313,14 +317,10 @@ test("low-information negative noise is removed with explicit reasons", async (t
 
   assert.equal(response.status, 200);
   assert.equal(result.decisions[0].action, "drop");
-  assert.deepEqual(result.decisions[0].reasonCodes, [
-    "EMOTIONAL_VENTING",
-    "NEGATIVE_NOISE",
-    "LOW_INFORMATION_VALUE"
-  ]);
+  assert.deepEqual(result.decisions[0].reasonCodes, ["EMOTIONAL_VENTING"]);
 });
 
-test("reliably low information value is enough to remove a post", async (t) => {
+test("low information value alone never removes a post", async (t) => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(
@@ -353,8 +353,8 @@ test("reliably low information value is enough to remove a post", async (t) => {
   const result = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(result.decisions[0].action, "drop");
-  assert.deepEqual(result.decisions[0].reasonCodes, ["LOW_INFORMATION_VALUE"]);
+  assert.equal(result.decisions[0].action, "keep");
+  assert.deepEqual(result.decisions[0].reasonCodes, []);
 });
 
 test("uncertain low information score does not remove a post by itself", async (t) => {
@@ -485,8 +485,8 @@ test("preserve signals do not override conflict bait or polarization", async (t)
         answers: modelAnswers(0, {
           contentValue: 0.6,
           contentValueConfidence: 0.9,
-          conflict_bait: 0.82,
-          polarization: 0.79,
+          conflict_bait: 0.9,
+          polarization: 0.9,
           lifestyle_sharing: 0.9
         }),
         usage: { input_tokens: 100, output_tokens: 20 }
@@ -528,9 +528,9 @@ test("commercial, conflict bait, and polarization are hard filter signals", asyn
         model: "jev-1.13.0",
         answers: modelAnswers(0, {
           contentValue: 2.7,
-          commercial: 0.8,
-          conflict_bait: 0.77,
-          polarization: 0.74
+          commercial: 0.9,
+          conflict_bait: 0.9,
+          polarization: 0.9
         }),
         usage: { input_tokens: 100, output_tokens: 20 }
       }),

@@ -2,7 +2,7 @@
 
 > 文档类型：As-built（当前已实现方案）  
 > 更新时间：2026-09-23  
-> 策略版本：`5`
+> 策略版本：`6`
 > TypeSafe 模型：`jev-1.13.0`
 
 ## 1. 背景与目标
@@ -40,7 +40,7 @@ flowchart LR
     XHS[小红书 Feed API] -->|HTTPS 响应| SR[Shadowrocket MITM]
     GH[GitHub Raw JS] -->|加载脚本| SR
     SR -->|标题/正文/分类/类型/广告标记| CF[Cloudflare Worker]
-    CF -->|确定性规则| RULES[广告/直播/空内容]
+    CF -->|确定性规则| RULES[广告/直播]
     CF -->|普通帖子：一次批量请求| JEV[TypeSafe System One / Jev]
     JEV -->|Score + Noul| CF
     CF -->|keep/drop 决策| SR
@@ -238,7 +238,7 @@ Content-Type: application/json
     }
   ],
   "model": "jev-1.13.0",
-  "policyVersion": "5",
+  "policyVersion": "6",
   "durationMs": 719,
   "usage": {
     "input_tokens": 1047,
@@ -257,10 +257,10 @@ Worker 先在代码中处理不需要 AI 的情况：
 | --- | --- | --- | --- |
 | `isAds === true` 且启用广告过滤 | `drop` | `AD_FLAG` | 否 |
 | `contentType === "live"` | `drop` | `LIVE_CARD` | 否 |
-| 标题和正文同时为空 | `drop` | `NO_CONTENT` | 否 |
+| 标题和正文同时为空 | `keep` | — | 否 |
 | 其他情况 | 待判断 | — | 是 |
 
-标题为空但正文存在时不会命中 `NO_CONTENT`，会正常进入 Jev。
+标题为空但正文存在时会正常进入 Jev。标题和正文同时为空时没有足够文本证据，而且卡片可能是纯摄影或视频内容，因此失败开放并默认保留。
 
 ### 7.2 第二层：TypeSafe/Jev 语义判断
 
@@ -283,8 +283,8 @@ Worker 先在代码中处理不需要 AI 的情况：
 | `conflict_bait_N` | Noul | `noul` | 判断是否主要通过挑衅、羞辱或激怒他人来引战 |
 | `polarization_N` | Noul | `noul` | 判断是否用刻板印象、群体归罪或敌我叙事制造对立 |
 | `emotional_venting_N` | Noul | `noul` | 判断是否主要是缺少背景和反思的情绪宣泄 |
-| `negative_noise_N` | Noul | `noul` | 判断是否只放大恐惧、愤怒或绝望而缺少事实和建议 |
-| `engagement_bait_N` | Noul | `noul` | 判断是否以信息缺失的噱头、悬念或互动请求骗取参与 |
+| `negative_noise_N` | Noul | `noul` | 可选实验信号；默认关闭，不参与请求或删除 |
+| `engagement_bait_N` | Noul | `noul` | 可选实验信号；默认关闭，不参与请求或删除 |
 | `experience_sharing_N` | Noul | `noul` | 判断是否为真实经历、过程、结果、测评、教训或个人叙述 |
 | `lifestyle_sharing_N` | Noul | `noul` | 判断是否为真实的日常生活或个人审美分享 |
 | `photography_sharing_N` | Noul | `noul` | 判断摄影或视觉创作本身是否为内容主体 |
@@ -325,17 +325,17 @@ Noul 没有独立的 `confidence` 字段，代码不会为它构造伪 confidenc
 ```json
 {
   "blockedTopic": 0.8,
-  "commercial": 0.75,
-  "conflictBait": 0.7,
-  "polarization": 0.7,
-  "emotionalVenting": 0.8,
+  "commercial": 0.8,
+  "conflictBait": 0.82,
+  "polarization": 0.82,
+  "emotionalVenting": 0.88,
   "negativeNoise": 0.8,
   "engagementBait": 0.75,
   "experienceSharing": 0.55,
   "lifestyleSharing": 0.6,
   "photographySharing": 0.6,
-  "maxContentValueForDrop": 0.45,
-  "minContentValueConfidence": 0.4
+  "maxContentValueForDrop": 0.4,
+  "minContentValueConfidence": 0.6
 }
 ```
 
@@ -348,15 +348,12 @@ Noul 没有独立的 `confidence` 字段，代码不会为它构造伪 confidenc
 任意一项成立，帖子获得保留保护。然后执行下列规则：
 
 1. `blocked >= 0.80`，原因 `BLOCKED_TOPIC`；
-2. `commercial >= 0.75`，原因 `COMMERCIAL`；
-3. `conflictBait >= 0.70`，原因 `CONFLICT_BAIT`；
-4. `polarization >= 0.70`，原因 `POLARIZATION`；
-5. 没有保留保护，且 `contentValue <= 0.45`、`contentValueConfidence >= 0.40`，原因 `LOW_INFORMATION_VALUE`；
-6. 没有保留保护、满足低信息价值，且 `emotionalVenting >= 0.80`，追加原因 `EMOTIONAL_VENTING`；
-7. 没有保留保护、满足低信息价值，且 `negativeNoise >= 0.80`，追加原因 `NEGATIVE_NOISE`；
-8. 没有保留保护、满足低信息价值，且 `engagementBait >= 0.75`，追加原因 `ENGAGEMENT_BAIT`。
+2. `commercial >= 0.80`，原因 `COMMERCIAL`；
+3. `conflictBait >= 0.82`，原因 `CONFLICT_BAIT`；
+4. `polarization >= 0.82`，原因 `POLARIZATION`；
+5. 没有保留保护、`contentValue <= 0.40`、`contentValueConfidence >= 0.60`，且 `emotionalVenting >= 0.88`，原因 `EMOTIONAL_VENTING`。
 
-其中第 2～4 条是硬语义规则：高概率营销、引战或群体对立即使同时属于生活、摄影或经验分享，也会过滤。第 5～8 条是软语义规则，会被三个正向保留信号覆盖。内容主题负面或语气激烈，并不自动等于垃圾；灾害预警、诈骗分析、疾病科普、风险分析等帖子，如果提供了足够事实、解释或行动建议，也不会仅因“负面”而过滤。
+其中第 2～4 条是硬语义规则：高概率营销、引战或群体对立即使同时属于生活、摄影或经验分享，也会过滤。第 5 条是唯一默认启用的软语义规则，会被三个正向保留信号覆盖。信息价值低不再单独删除；普通互动请求、标题党倾向和一般负面主题也不再单独删除。内容主题负面或语气激烈，并不自动等于垃圾；灾害预警、诈骗分析、疾病科普、风险分析、普通抱怨、困难经历和具体求助默认保留。
 
 没有任何原因码时得到 `keep`。当前默认 `blockedTopics=[]`，因此未配置自定义策略时不会生成 `blocked_N` 问题。一个帖子可同时命中多个原因码，这正是使用多个独立 Noul 而不是互斥分类的目的。
 
@@ -384,7 +381,7 @@ keepScore = clamp(
 ```text
 [❌应移除] 原作者
 [✅应保留] 原作者
-[移除原因：负面噪音、信息价值低] 原标题
+[移除原因：商业营销] 原标题
 ```
 
 昵称只用于呈现观察结果，不会发送给 Worker 或 Jev。应移除帖子的标题会附加由 `reasonCodes` 翻译得到的中文原因；保留帖子的标题保持不变。
@@ -415,7 +412,7 @@ minimum = max(
 | 20 | 8 |
 | 30 | 12 |
 
-广告和直播先固定删除，因此它们较多时，最终数量允许低于上表目标。`NO_CONTENT` 和各类 Jev 语义原因等其他 `drop` 仍受最低保留保护。
+广告和直播先固定删除，因此它们较多时，最终数量允许低于上表目标。各类 Jev 语义原因产生的其他 `drop` 仍受最低保留保护；无文字卡片当前默认保留，不会产生 `NO_CONTENT`。
 
 这意味着观察模式中的 `[❌应移除]` 是 Worker 的语义建议，不保证在过滤模式下全部真正删除；固定广告和直播除外。
 
@@ -425,10 +422,10 @@ minimum = max(
 
 - **代码控制工作流**：拦截、鉴权、固定规则、阈值、排序和删除都由普通代码完成；
 - **结构化 state**：标题、正文、分类、内容类型和策略分别使用命名字段；
-- **原子问题**：内容价值、六个过滤信号和三个保留信号分别判断，避免一个模糊的“低质量”问题承担所有含义；
+- **原子问题**：内容价值、已启用的四个过滤信号和三个保留信号分别判断，避免一个模糊的“低质量”问题承担所有含义；
 - **一次并行请求**：同页全部独立问题一次提交，避免逐帖串行调用；
 - **正确使用 primitive**：程度使用 Score，是否成立使用 Noul；
-- **显式处理不确定性**：低内容价值规则同时检查 Score confidence；
+- **显式处理不确定性**：纯情绪宣泄只有在低内容价值且 Score confidence 足够高时才执行；
 - **严格验证响应**：缺少答案、类型错误或数值无效时整次请求失败，不用默认值伪造结果；
 - **版本固定**：使用 `jev-1.13.0`，避免 `jev-latest` 更新后让阈值行为无提示漂移。
 
@@ -516,7 +513,7 @@ npx wrangler secret put FILTER_POLICY_JSON \
   --config worker/wrangler.jsonc < worker/policy.local.json
 ```
 
-策略覆盖继续兼容旧字段 `relevance` / `contentValue` 和 `relevanceConfidence` / `contentValueConfidence`，分别映射为 `maxContentValueForDrop` 和 `minContentValueConfidence`。旧 `filterCommercial: false` 也会映射为关闭 `enabledSignals.commercial`。其余旧版 `lowQuality` 阈值不再参与版本 5 判断。
+策略覆盖继续兼容旧字段 `relevance` / `contentValue` 和 `relevanceConfidence` / `contentValueConfidence`，分别映射为 `maxContentValueForDrop` 和 `minContentValueConfidence`。旧 `filterCommercial: false` 也会映射为关闭 `enabledSignals.commercial`。其余旧版 `lowQuality` 阈值不再参与版本 6 判断。
 
 请求中的 `schemaVersion: 1` 当前由客户端携带，但 Worker 尚未据此做版本分流或拒绝不兼容版本；这是后续协议演进时需要补齐的校验点。
 
@@ -532,13 +529,13 @@ npx wrangler secret put FILTER_POLICY_JSON \
 - Worker 健康检查和客户端鉴权；
 - 重复 key 拒绝；
 - 每帖问题索引和结构；
-- 广告、直播、空内容确定性规则；
+- 广告、直播确定性删除，以及无文字卡片默认保留；
 - 空标题但有正文进入 Jev；
-- 策略版本 5、新信号开关和旧内容价值阈值字段兼容；
+- 策略版本 6、新信号开关和旧内容价值阈值字段兼容；
 - 有信息价值的负面内容保留；
-- 低价值负面噪音产生可解释的多个原因码；
-- 低信息价值可单独触发过滤，置信度不足时不触发；
-- 经验、生活和摄影分享覆盖低信息价值等软过滤原因；
+- 纯低信息情绪宣泄产生一个准确原因码；
+- 低信息价值单独出现时仍保留；
+- 经验、生活和摄影分享覆盖情绪宣泄软过滤原因；
 - 正向保留信号不能覆盖广告、引战和群体对立；
 - 营销、引战和群体对立作为硬语义规则过滤；
 - TypeSafe `429/529` 重试；
