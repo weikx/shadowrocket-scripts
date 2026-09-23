@@ -21,6 +21,35 @@ function filterRequest(items, token = "client-secret") {
   });
 }
 
+const signalAnswerNames = [
+  "commercial",
+  "conflict_bait",
+  "polarization",
+  "emotional_venting",
+  "negative_noise",
+  "engagement_bait"
+];
+
+function modelAnswers(index, options = {}) {
+  const answers = {
+    [`content_value_${index}`]: {
+      type: "score",
+      score: options.contentValue ?? 2.7,
+      confidence: options.contentValueConfidence ?? 0.9
+    }
+  };
+  signalAnswerNames.forEach((name) => {
+    answers[`${name}_${index}`] = {
+      type: "noul",
+      noul: options[name] ?? 0.05
+    };
+  });
+  if (options.blocked !== undefined) {
+    answers[`blocked_${index}`] = { type: "noul", noul: options.blocked };
+  }
+  return answers;
+}
+
 test("health endpoint reports whether secrets are configured", async () => {
   const response = await worker.fetch(
     new Request("https://example.workers.dev/health"),
@@ -51,7 +80,7 @@ test("filter endpoint rejects duplicate item keys", async () => {
   assert.deepEqual(await response.json(), { error: "item keys must be unique" });
 });
 
-test("questions are independent and include the post index in instructions", () => {
+test("questions are atomic and include the post index in instructions", () => {
   const policy = parsePolicy();
   const questions = buildQuestions(
     [
@@ -67,12 +96,20 @@ test("questions are independent and include the post index in instructions", () 
   );
   assert.deepEqual(Object.keys(questions), [
     "content_value_0",
-    "low_quality_0",
-    "commercial_0"
+    "commercial_0",
+    "conflict_bait_0",
+    "polarization_0",
+    "emotional_venting_0",
+    "negative_noise_0",
+    "engagement_bait_0"
   ]);
   assert.match(JSON.stringify(questions.content_value_0.instructions), /posts\[0\]/);
   assert.match(JSON.stringify(questions.content_value_0.instructions), /title/);
   assert.match(JSON.stringify(questions.content_value_0.instructions), /content/);
+  assert.equal(questions.content_value_0.type, "score");
+  assert.equal(questions.content_value_0.criteria.length, 4);
+  assert.equal(questions.commercial_0.type, "noul");
+  assert.deepEqual(Object.keys(questions.commercial_0.criteria), ["true", "false"]);
 });
 
 test("strict defaults remove live cards and never send author names to Jev", async (t) => {
@@ -86,15 +123,15 @@ test("strict defaults remove live cards and never send author names to Jev", asy
       JSON.stringify({
         model: "jev-1.13.0",
         answers: {
-          content_value_0: { type: "score", score: 0.3, confidence: 0.9 },
-          low_quality_0: { type: "noul", noul: 0.7 },
-          commercial_0: { type: "noul", noul: 0.1 },
-          content_value_1: { type: "score", score: 2.8, confidence: 0.9 },
-          low_quality_1: { type: "noul", noul: 0.05 },
-          commercial_1: { type: "noul", noul: 0.02 },
-          content_value_2: { type: "score", score: 2.6, confidence: 0.85 },
-          low_quality_2: { type: "noul", noul: 0.08 },
-          commercial_2: { type: "noul", noul: 0.03 }
+          ...modelAnswers(0, {
+            contentValue: 0.3,
+            engagement_bait: 0.8
+          }),
+          ...modelAnswers(1, { contentValue: 2.8 }),
+          ...modelAnswers(2, {
+            contentValue: 2.6,
+            contentValueConfidence: 0.85
+          })
         },
         usage: { input_tokens: 100, output_tokens: 20 }
       }),
@@ -142,12 +179,16 @@ test("strict defaults remove live cards and never send author names to Jev", asy
     category: "Unknown category",
     contentType: "normal"
   });
-  assert.equal(Object.keys(requestPayload.questions).length, 9);
+  assert.equal(Object.keys(requestPayload.questions).length, 21);
   assert.deepEqual(
     result.decisions.map(({ key, action, reasonCodes }) => ({ key, action, reasonCodes })),
     [
       { key: "0", action: "drop", reasonCodes: ["AD_FLAG"] },
-      { key: "1", action: "drop", reasonCodes: ["LOW_VALUE_AND_QUALITY"] },
+      {
+        key: "1",
+        action: "drop",
+        reasonCodes: ["ENGAGEMENT_BAIT", "LOW_INFORMATION_VALUE"]
+      },
       { key: "2", action: "keep", reasonCodes: [] },
       { key: "3", action: "drop", reasonCodes: ["LIVE_CARD"] },
       { key: "4", action: "keep", reasonCodes: [] },
@@ -158,20 +199,273 @@ test("strict defaults remove live cards and never send author names to Jev", asy
 
 test("strict default thresholds are more selective", () => {
   const policy = parsePolicy();
-  assert.equal(policy.version, "3");
+  assert.equal(policy.version, "4");
   assert.equal(policy.thresholds.commercial, 0.75);
-  assert.equal(policy.thresholds.veryLowQuality, 0.8);
-  assert.equal(policy.thresholds.lowQuality, 0.6);
-  assert.equal(policy.thresholds.contentValue, 0.5);
-  assert.equal(policy.thresholds.contentValueConfidence, 0.35);
+  assert.equal(policy.thresholds.conflictBait, 0.7);
+  assert.equal(policy.thresholds.polarization, 0.7);
+  assert.equal(policy.thresholds.emotionalVenting, 0.8);
+  assert.equal(policy.thresholds.negativeNoise, 0.8);
+  assert.equal(policy.thresholds.engagementBait, 0.75);
+  assert.equal(policy.thresholds.maxContentValueForDrop, 0.45);
+  assert.equal(policy.thresholds.minContentValueConfidence, 0.4);
 });
 
 test("legacy relevance threshold names remain compatible", () => {
   const policy = parsePolicy(
     JSON.stringify({ thresholds: { relevance: 0.4, relevanceConfidence: 0.6 } })
   );
-  assert.equal(policy.thresholds.contentValue, 0.4);
-  assert.equal(policy.thresholds.contentValueConfidence, 0.6);
+  assert.equal(policy.thresholds.maxContentValueForDrop, 0.4);
+  assert.equal(policy.thresholds.minContentValueConfidence, 0.6);
+});
+
+test("negative topics are kept when they contain reliable information", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: modelAnswers(0, {
+          contentValue: 2.8,
+          contentValueConfidence: 0.9,
+          emotional_venting: 0.92,
+          negative_noise: 0.95,
+          engagement_bait: 0.88
+        }),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "新型诈骗高发",
+        content: "列出诈骗步骤、警方数据和三个核验方法。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(result.decisions[0].action, "keep");
+  assert.deepEqual(result.decisions[0].reasonCodes, []);
+  assert.equal(result.decisions[0].signals.negativeNoise, 0.95);
+});
+
+test("low-information negative noise is removed with explicit reasons", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: modelAnswers(0, {
+          contentValue: 0.6,
+          contentValueConfidence: 0.9,
+          emotional_venting: 0.91,
+          negative_noise: 0.93
+        }),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "一切都完了",
+        content: "太可怕了，真的受不了了。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(result.decisions[0].action, "drop");
+  assert.deepEqual(result.decisions[0].reasonCodes, [
+    "EMOTIONAL_VENTING",
+    "NEGATIVE_NOISE",
+    "LOW_INFORMATION_VALUE"
+  ]);
+});
+
+test("reliably low information value is enough to remove a post", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: modelAnswers(0, {
+          contentValue: 1.2,
+          contentValueConfidence: 0.85
+        }),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "今天随便发一下",
+        content: "就这样吧。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(result.decisions[0].action, "drop");
+  assert.deepEqual(result.decisions[0].reasonCodes, ["LOW_INFORMATION_VALUE"]);
+});
+
+test("uncertain low information score does not remove a post by itself", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: modelAnswers(0, {
+          contentValue: 0.6,
+          contentValueConfidence: 0.2,
+          emotional_venting: 0.95,
+          negative_noise: 0.95,
+          engagement_bait: 0.95
+        }),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "证据不足的边界样本",
+        content: "正文很短。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(result.decisions[0].action, "keep");
+  assert.deepEqual(result.decisions[0].reasonCodes, []);
+});
+
+test("commercial, conflict bait, and polarization are hard filter signals", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: modelAnswers(0, {
+          contentValue: 2.7,
+          commercial: 0.8,
+          conflict_bait: 0.77,
+          polarization: 0.74
+        }),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "测试",
+        content: "有一些具体内容。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(result.decisions[0].reasonCodes, [
+    "COMMERCIAL",
+    "CONFLICT_BAIT",
+    "POLARIZATION"
+  ]);
+});
+
+test("disabled semantic signals are neither asked nor required", async (t) => {
+  let requestPayload;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requestPayload = JSON.parse(init.body);
+    return new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: {
+          content_value_0: { type: "score", score: 2.7, confidence: 0.9 }
+        },
+        usage: { input_tokens: 100, output_tokens: 10 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      { key: "0", title: "测试", contentType: "normal", isAds: false }
+    ]),
+    {
+      ...baseEnv,
+      FILTER_POLICY_JSON: JSON.stringify({
+        enabledSignals: Object.fromEntries(
+          [
+            "commercial",
+            "conflictBait",
+            "polarization",
+            "emotionalVenting",
+            "negativeNoise",
+            "engagementBait"
+          ].map((key) => [key, false])
+        )
+      })
+    }
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(Object.keys(requestPayload.questions), ["content_value_0"]);
+  assert.equal(result.decisions[0].action, "keep");
 });
 
 test("retries TypeSafe rate limits before returning a decision", async (t) => {
@@ -188,11 +482,7 @@ test("retries TypeSafe rate limits before returning a decision", async (t) => {
     return new Response(
       JSON.stringify({
         model: "jev-1.13.0",
-        answers: {
-          content_value_0: { type: "score", score: 2.7, confidence: 0.9 },
-          low_quality_0: { type: "noul", noul: 0.05 },
-          commercial_0: { type: "noul", noul: 0.02 }
-        },
+        answers: modelAnswers(0, { commercial: 0.02 }),
         usage: { input_tokens: 100, output_tokens: 10 }
       }),
       { status: 200, headers: { "content-type": "application/json" } }
@@ -228,8 +518,8 @@ test("fails open at the client boundary when TypeSafe omits an answer", async (t
       JSON.stringify({
         model: "jev-1.13.0",
         answers: {
-          content_value_0: { type: "score", score: 2.7, confidence: 0.9 },
-          low_quality_0: { type: "noul", noul: 0.05 }
+          ...modelAnswers(0),
+          commercial_0: undefined
         },
         usage: { input_tokens: 100, output_tokens: 10 }
       }),

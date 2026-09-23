@@ -1,22 +1,57 @@
 {
-  "version": "3",
-  "interests": [
-    "请把这里替换成你希望看到的主题，例如 AI 工具与实际工作方法",
-    "请把这里替换成你希望看到的主题，例如软件工程与产品设计"
+  "version": "4",
+  "blockedTopics": [],
+  "highValueDescription": "帮助读者了解事实、理解问题或做出判断，提供明确的背景、解释、方法、步骤、数据、对比、可执行建议或可复用的一手经验",
+  "contentValueCriteria": [
+    "The supplied text contains no usable information: it is empty in substance, vague, purely emotional, a slogan, a tease, or context-free sharing",
+    "The supplied text names a topic, opinion, or experience but gives little concrete context, evidence, explanation, or reusable takeaway",
+    "The supplied text provides at least one concrete fact, explanation, comparison, method, actionable suggestion, or specific first-hand experience",
+    "The supplied text provides multiple concrete facts, steps, data points, well-supported analysis, or unusually useful and reusable first-hand insight"
   ],
-  "blockedTopics": [
-    "请把这里替换成你明确不想看到的主题"
-  ],
-  "highValueDescription": "从标题或正文可以明确看出包含具体事实、知识、方法、步骤、数据、可复用经验或值得深入了解的信息",
-  "lowValueDescription": "标题党、空泛情绪、日常打卡、无上下文的随手发、重复搬运、互动诱导、刻意制造焦虑，或标题与正文都没有展示具体信息价值",
   "filterAds": true,
-  "filterCommercial": true,
+  "enabledSignals": {
+    "commercial": true,
+    "conflictBait": true,
+    "polarization": true,
+    "emotionalVenting": true,
+    "negativeNoise": true,
+    "engagementBait": true
+  },
+  "signalDefinitions": {
+    "commercial": {
+      "true": "The primary purpose is to sell or promote a product, service, course, merchant, account, discount, affiliate offer, private-message lead, or other conversion action, including disguised advertising",
+      "false": "The post is not primarily promotional. Independent reviews, comparisons, consumer warnings, and factual discussion of products are not commercial merely because a product is mentioned"
+    },
+    "conflictBait": {
+      "true": "The wording deliberately provokes hostile argument, outrage, insults, ridicule, accusation, or a comment fight as a primary engagement strategy",
+      "false": "It presents criticism, disagreement, controversy, or a strong opinion with substantive context and without primarily trying to provoke interpersonal hostility"
+    },
+    "polarization": {
+      "true": "It divides identity or social groups into opposing camps and uses sweeping stereotypes, superiority or inferiority claims, collective blame, contempt, or hostility toward a group",
+      "false": "It neutrally compares groups or discusses inequality, discrimination, demographics, or social conflict with evidence and nuance rather than promoting group hostility"
+    },
+    "emotionalVenting": {
+      "true": "The post is mainly unprocessed anger, sadness, resentment, grievance, anxiety, or self-pity, with little concrete context, reflection, lesson, or reusable insight",
+      "false": "It may express emotion, but also provides concrete experience, reflection, explanation, coping methods, or information useful to another reader"
+    },
+    "negativeNoise": {
+      "true": "The primary effect is to amplify fear, anger, shame, anxiety, despair, humiliation, or catastrophizing without enough factual context, analysis, verification, or useful guidance",
+      "false": "Factual bad news, risk analysis, public-safety or health warnings, scam alerts, consumer warnings, and problem-solving content remain informative even when the subject is negative"
+    },
+    "engagementBait": {
+      "true": "The post withholds substance or uses a sensational curiosity gap, exaggerated promise, vague teaser, or low-context request for comments, likes, follows, or guesses mainly to drive engagement",
+      "false": "A question or strong headline is not bait when the post supplies useful context or seeks a concrete, answerable exchange"
+    }
+  },
   "thresholds": {
-    "blocked": 0.8,
+    "blockedTopic": 0.8,
     "commercial": 0.75,
-    "veryLowQuality": 0.8,
-    "lowQuality": 0.6,
-    "contentValue": 0.5,
-    "contentValueConfidence": 0.35
+    "conflictBait": 0.7,
+    "polarization": 0.7,
+    "emotionalVenting": 0.8,
+    "negativeNoise": 0.8,
+    "engagementBait": 0.75,
+    "maxContentValueForDrop": 0.45,
+    "minContentValueConfidence": 0.4
   }
 }

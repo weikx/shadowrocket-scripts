@@ -76,10 +76,12 @@ cp worker/policy.example.json worker/policy.local.json
 
 编辑 `worker/policy.local.json`，可调整：
 
-- `interests`：兼容预留字段；当前“只按内容质量判断”的版本不使用它做主题匹配。
 - `blockedTopics`：明确不想看到的主题。
 - `highValueDescription`：你认为有价值的内容标准。
-- `lowValueDescription`：你认为低质量的内容标准。
+- `contentValueCriteria`：信息价值从 0 到 3 的四级定义。
+- `enabledSignals`：分别启用或关闭营销、引战、群体对立、情绪宣泄、负面噪音和互动诱导。
+- `signalDefinitions`：每个语义信号中“是”和“否”的明确边界。
+- `thresholds`：每个信号各自的过滤阈值。
 
 将整个配置作为 Secret 上传：
 
@@ -89,7 +91,20 @@ npx wrangler secret put FILTER_POLICY_JSON --config worker/wrangler.jsonc < work
 
 `policy.local.json` 已被 `.gitignore` 排除，不会被提交。修改策略后重新执行上面的命令即可，不需要重新发布 Shadowrocket 脚本。
 
-当前默认策略偏严格：直播卡片和显式广告固定过滤；普通帖子综合判断标题、Feed 返回的正文、分类和内容类型，不参考作者身份。明确营销概率达到 `0.75`、低质量概率达到 `0.8`，或同时满足内容价值不高于 `0.5`、低质量概率至少 `0.6`、内容价值判断置信度至少 `0.35` 时，会标记为过滤。只有标题和正文同时为空时才直接标记为无内容；标题为空但正文存在时仍由 Jev 判断。
+当前默认策略偏严格：直播卡片和小红书显式标记的广告固定过滤；普通帖子综合判断标题、Feed 返回的正文、分类和内容类型，不参考作者身份。Jev 分别返回内容价值、营销、引战、群体对立、情绪宣泄、负面噪音和互动诱导的结构化判断，Worker 再应用可见的阈值。详细规则见下表。
+
+| 规则 | 默认条件 | 原因码 |
+| --- | --- | --- |
+| 屏蔽主题 | `blocked >= 0.80` | `BLOCKED_TOPIC` |
+| 商业营销 | `commercial >= 0.75` | `COMMERCIAL` |
+| 引战 | `conflictBait >= 0.70` | `CONFLICT_BAIT` |
+| 群体对立 | `polarization >= 0.70` | `POLARIZATION` |
+| 低信息价值 | `contentValue <= 0.45` 且 `confidence >= 0.40` | `LOW_INFORMATION_VALUE` |
+| 情绪宣泄 | 概率 `>= 0.80`，并且满足低信息价值 | `EMOTIONAL_VENTING` |
+| 负面噪音 | 概率 `>= 0.80`，并且满足低信息价值 | `NEGATIVE_NOISE` |
+| 互动诱导 | 概率 `>= 0.75`，并且满足低信息价值 | `ENGAGEMENT_BAIT` |
+
+商业营销、引战和群体对立是硬语义规则，达到各自阈值即可过滤。情绪宣泄、负面噪音和互动诱导会同时检查信息价值，避免把有事实、有分析或有行动建议的负面新闻、风险提示、诈骗预警和疾病科普误删。低信息价值本身也会触发过滤。只有标题和正文同时为空时才直接标记为无内容；标题为空但正文存在时仍由 Jev 判断。
 
 Jev 无法查看 Feed 里的封面与视频。部分小红书首页 Feed 响应并不下发帖子正文（示例响应中的 `desc` 就全部为空），此时本次判断仍只能使用标题；脚本不会为了补正文而逐帖调用详情接口。
 
@@ -162,7 +177,7 @@ curl "$FILTER_URL" \
 
 响应中的 `decisions[0].action` 应为 `keep` 或 `drop`，并包含各项概率、原因代码、模型版本和 token 用量。
 
-当前实现遵循 TypeSafe 的 System One 方式：把帖子字段组织为结构化 `state`，用独立的 `Score` 判断内容价值，用多个 `Noul` 分别判断低质量、营销和可选的屏蔽主题，再由 Worker 中的确定性阈值组合最终结果。所有问题在一次请求中并行计算。模型固定为 `jev-1.13.0`，避免模型别名升级后让已经调好的阈值无提示漂移。
+当前实现遵循 TypeSafe 的 System One 方式：把帖子字段组织为结构化 `state`，用一个 `Score` 判断信息价值，用多个原子 `Noul` 分别判断营销、引战、群体对立、情绪宣泄、负面噪音、互动诱导和可选屏蔽主题，再由 Worker 中的明确阈值组合最终结果。所有问题在一次请求中并行计算。模型固定为 `jev-1.13.0`，避免模型别名升级后让已经调好的阈值无提示漂移。
 
 ## 7. 本地验证
 

@@ -1,23 +1,119 @@
 const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
 const MAX_ITEMS = 30;
+const SIGNAL_KEYS = Object.freeze([
+  "commercial",
+  "conflictBait",
+  "polarization",
+  "emotionalVenting",
+  "negativeNoise",
+  "engagementBait"
+]);
+
+const SIGNAL_RULES = Object.freeze({
+  commercial: Object.freeze({
+    answerPrefix: "commercial",
+    reasonCode: "COMMERCIAL",
+    requiresLowInformationValue: false
+  }),
+  conflictBait: Object.freeze({
+    answerPrefix: "conflict_bait",
+    reasonCode: "CONFLICT_BAIT",
+    requiresLowInformationValue: false
+  }),
+  polarization: Object.freeze({
+    answerPrefix: "polarization",
+    reasonCode: "POLARIZATION",
+    requiresLowInformationValue: false
+  }),
+  emotionalVenting: Object.freeze({
+    answerPrefix: "emotional_venting",
+    reasonCode: "EMOTIONAL_VENTING",
+    requiresLowInformationValue: true
+  }),
+  negativeNoise: Object.freeze({
+    answerPrefix: "negative_noise",
+    reasonCode: "NEGATIVE_NOISE",
+    requiresLowInformationValue: true
+  }),
+  engagementBait: Object.freeze({
+    answerPrefix: "engagement_bait",
+    reasonCode: "ENGAGEMENT_BAIT",
+    requiresLowInformationValue: true
+  })
+});
+
+const DEFAULT_CONTENT_VALUE_CRITERIA = Object.freeze([
+  "The supplied text contains no usable information: it is empty in substance, vague, purely emotional, a slogan, a tease, or context-free sharing",
+  "The supplied text names a topic, opinion, or experience but gives little concrete context, evidence, explanation, or reusable takeaway",
+  "The supplied text provides at least one concrete fact, explanation, comparison, method, actionable suggestion, or specific first-hand experience",
+  "The supplied text provides multiple concrete facts, steps, data points, well-supported analysis, or unusually useful and reusable first-hand insight"
+]);
+
+const DEFAULT_SIGNAL_DEFINITIONS = Object.freeze({
+  commercial: {
+    true:
+      "The primary purpose is to sell or promote a product, service, course, merchant, account, discount, affiliate offer, private-message lead, or other conversion action, including disguised advertising",
+    false:
+      "The post is not primarily promotional. Independent reviews, comparisons, consumer warnings, and factual discussion of products are not commercial merely because a product is mentioned"
+  },
+  conflictBait: {
+    true:
+      "The wording deliberately provokes hostile argument, outrage, insults, ridicule, accusation, or a comment fight as a primary engagement strategy",
+    false:
+      "It presents criticism, disagreement, controversy, or a strong opinion with substantive context and without primarily trying to provoke interpersonal hostility"
+  },
+  polarization: {
+    true:
+      "It divides identity or social groups into opposing camps and uses sweeping stereotypes, superiority or inferiority claims, collective blame, contempt, or hostility toward a group",
+    false:
+      "It neutrally compares groups or discusses inequality, discrimination, demographics, or social conflict with evidence and nuance rather than promoting group hostility"
+  },
+  emotionalVenting: {
+    true:
+      "The post is mainly unprocessed anger, sadness, resentment, grievance, anxiety, or self-pity, with little concrete context, reflection, lesson, or reusable insight",
+    false:
+      "It may express emotion, but also provides concrete experience, reflection, explanation, coping methods, or information useful to another reader"
+  },
+  negativeNoise: {
+    true:
+      "The primary effect is to amplify fear, anger, shame, anxiety, despair, humiliation, or catastrophizing without enough factual context, analysis, verification, or useful guidance",
+    false:
+      "Factual bad news, risk analysis, public-safety or health warnings, scam alerts, consumer warnings, and problem-solving content remain informative even when the subject is negative"
+  },
+  engagementBait: {
+    true:
+      "The post withholds substance or uses a sensational curiosity gap, exaggerated promise, vague teaser, or low-context request for comments, likes, follows, or guesses mainly to drive engagement",
+    false:
+      "A question or strong headline is not bait when the post supplies useful context or seeks a concrete, answerable exchange"
+  }
+});
 
 const DEFAULT_POLICY = Object.freeze({
-  version: "3",
-  interests: [],
+  version: "4",
   blockedTopics: [],
   highValueDescription:
-    "从标题或正文可以明确看出包含具体事实、知识、方法、步骤、数据、可复用经验或值得深入了解的信息",
-  lowValueDescription:
-    "标题党、空泛情绪、日常打卡、无上下文的随手发、重复搬运、互动诱导、刻意制造焦虑，或标题与正文都没有展示具体信息价值",
+    "帮助读者了解事实、理解问题或做出判断，提供明确的背景、解释、方法、步骤、数据、对比、可执行建议或可复用的一手经验",
+  contentValueCriteria: DEFAULT_CONTENT_VALUE_CRITERIA,
   filterAds: true,
-  filterCommercial: true,
+  enabledSignals: Object.freeze({
+    commercial: true,
+    conflictBait: true,
+    polarization: true,
+    emotionalVenting: true,
+    negativeNoise: true,
+    engagementBait: true
+  }),
+  signalDefinitions: DEFAULT_SIGNAL_DEFINITIONS,
   thresholds: {
-    blocked: 0.8,
+    blockedTopic: 0.8,
     commercial: 0.75,
-    veryLowQuality: 0.8,
-    lowQuality: 0.6,
-    contentValue: 0.5,
-    contentValueConfidence: 0.35
+    conflictBait: 0.7,
+    polarization: 0.7,
+    emotionalVenting: 0.8,
+    negativeNoise: 0.8,
+    engagementBait: 0.75,
+    maxContentValueForDrop: 0.45,
+    minContentValueConfidence: 0.4
   }
 });
 
@@ -43,6 +139,45 @@ function cleanString(value, maxLength = 500) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+function parseContentValueCriteria(value) {
+  if (!Array.isArray(value) || value.length !== 4) {
+    return DEFAULT_CONTENT_VALUE_CRITERIA;
+  }
+  const criteria = value.map((entry) => cleanString(entry, 1000));
+  return criteria.every(Boolean) ? criteria : DEFAULT_CONTENT_VALUE_CRITERIA;
+}
+
+function parseEnabledSignals(value, legacyPolicy) {
+  const custom = value && typeof value === "object" ? value : {};
+  return Object.fromEntries(
+    SIGNAL_KEYS.map((key) => {
+      if (typeof custom[key] === "boolean") return [key, custom[key]];
+      if (key === "commercial" && legacyPolicy.filterCommercial === false) {
+        return [key, false];
+      }
+      return [key, DEFAULT_POLICY.enabledSignals[key]];
+    })
+  );
+}
+
+function parseSignalDefinitions(value) {
+  const custom = value && typeof value === "object" ? value : {};
+  return Object.fromEntries(
+    SIGNAL_KEYS.map((key) => {
+      const entry = custom[key] && typeof custom[key] === "object" ? custom[key] : {};
+      return [
+        key,
+        {
+          true:
+            cleanString(entry.true, 1000) || DEFAULT_SIGNAL_DEFINITIONS[key].true,
+          false:
+            cleanString(entry.false, 1000) || DEFAULT_SIGNAL_DEFINITIONS[key].false
+        }
+      ];
+    })
+  );
+}
+
 function parsePolicy(raw) {
   if (!raw) return DEFAULT_POLICY;
 
@@ -56,44 +191,67 @@ function parsePolicy(raw) {
   const thresholds = custom.thresholds || {};
   return {
     version: cleanString(custom.version, 50) || DEFAULT_POLICY.version,
-    interests: Array.isArray(custom.interests)
-      ? custom.interests.map((value) => cleanString(value, 200)).filter(Boolean).slice(0, 30)
-      : DEFAULT_POLICY.interests,
     blockedTopics: Array.isArray(custom.blockedTopics)
       ? custom.blockedTopics.map((value) => cleanString(value, 200)).filter(Boolean).slice(0, 30)
       : DEFAULT_POLICY.blockedTopics,
     highValueDescription:
       cleanString(custom.highValueDescription, 1000) || DEFAULT_POLICY.highValueDescription,
-    lowValueDescription:
-      cleanString(custom.lowValueDescription, 1000) || DEFAULT_POLICY.lowValueDescription,
+    contentValueCriteria: parseContentValueCriteria(custom.contentValueCriteria),
     filterAds: custom.filterAds !== false,
-    filterCommercial: custom.filterCommercial !== false,
+    enabledSignals: parseEnabledSignals(custom.enabledSignals, custom),
+    signalDefinitions: parseSignalDefinitions(custom.signalDefinitions),
     thresholds: {
-      blocked: clamp(finiteNumber(thresholds.blocked, DEFAULT_POLICY.thresholds.blocked)),
+      blockedTopic: clamp(
+        finiteNumber(
+          thresholds.blockedTopic,
+          finiteNumber(thresholds.blocked, DEFAULT_POLICY.thresholds.blockedTopic)
+        )
+      ),
       commercial: clamp(
         finiteNumber(thresholds.commercial, DEFAULT_POLICY.thresholds.commercial)
       ),
-      veryLowQuality: clamp(
+      conflictBait: clamp(
+        finiteNumber(thresholds.conflictBait, DEFAULT_POLICY.thresholds.conflictBait)
+      ),
+      polarization: clamp(
+        finiteNumber(thresholds.polarization, DEFAULT_POLICY.thresholds.polarization)
+      ),
+      emotionalVenting: clamp(
         finiteNumber(
-          thresholds.veryLowQuality,
-          DEFAULT_POLICY.thresholds.veryLowQuality
+          thresholds.emotionalVenting,
+          DEFAULT_POLICY.thresholds.emotionalVenting
         )
       ),
-      lowQuality: clamp(
-        finiteNumber(thresholds.lowQuality, DEFAULT_POLICY.thresholds.lowQuality)
+      negativeNoise: clamp(
+        finiteNumber(thresholds.negativeNoise, DEFAULT_POLICY.thresholds.negativeNoise)
       ),
-      contentValue: clamp(
+      engagementBait: clamp(
         finiteNumber(
-          thresholds.contentValue,
-          finiteNumber(thresholds.relevance, DEFAULT_POLICY.thresholds.contentValue)
+          thresholds.engagementBait,
+          DEFAULT_POLICY.thresholds.engagementBait
         )
       ),
-      contentValueConfidence: clamp(
+      maxContentValueForDrop: clamp(
         finiteNumber(
-          thresholds.contentValueConfidence,
+          thresholds.maxContentValueForDrop,
           finiteNumber(
-            thresholds.relevanceConfidence,
-            DEFAULT_POLICY.thresholds.contentValueConfidence
+            thresholds.contentValue,
+            finiteNumber(
+              thresholds.relevance,
+              DEFAULT_POLICY.thresholds.maxContentValueForDrop
+            )
+          )
+        )
+      ),
+      minContentValueConfidence: clamp(
+        finiteNumber(
+          thresholds.minContentValueConfidence,
+          finiteNumber(
+            thresholds.contentValueConfidence,
+            finiteNumber(
+              thresholds.relevanceConfidence,
+              DEFAULT_POLICY.thresholds.minContentValueConfidence
+            )
           )
         )
       )
@@ -126,15 +284,15 @@ function isAuthorized(request, env) {
 function buildState(posts, policy) {
   return {
     language: "Chinese social-media posts; judge the supplied text as written",
+    evaluationGoal:
+      "Keep posts that help a reader learn facts, understand a situation, solve a problem, or make a decision. Judge information utility separately from whether the topic or emotion is positive or negative.",
     evidenceLimit:
       "Judge only the supplied title, content, category, and content type. Consider title and content together; either field may be empty. Do not penalize a missing title when the content itself provides useful evidence. Do not use or infer author identity. Do not infer unseen image, video, or other details.",
-    preference: {
-      interests: policy.interests.length ? policy.interests : ["No topic preference configured"],
+    policy: {
       blockedTopics: policy.blockedTopics.length
         ? policy.blockedTopics
         : ["No blocked topics configured"],
-      highValueContent: policy.highValueDescription,
-      lowValueContent: policy.lowValueDescription
+      highValueContent: policy.highValueDescription
     },
     posts: posts.map((item) => ({
       title: item.title,
@@ -150,55 +308,68 @@ function buildQuestions(posts, policy) {
 
   posts.forEach((_post, index) => {
     const target = `Evaluate only \`posts[${index}]\`. Base the answer only on fields present in state.`;
+    const inspect = `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together. Either may be empty.`;
+    const addSignalQuestion = (key, question) => {
+      if (!policy.enabledSignals[key]) return;
+      questions[`${SIGNAL_RULES[key].answerPrefix}_${index}`] = {
+        type: "noul",
+        instructions: {
+          target,
+          question,
+          inspect,
+          constraint:
+            "Classify the communication pattern, not the topic alone. Do not infer from the author or unseen media."
+        },
+        criteria: policy.signalDefinitions[key]
+      };
+    };
 
     questions[`content_value_${index}`] = {
       type: "score",
       instructions: {
-        question: `${target} How much does this post match \`preference.highValueContent\` and provide concrete informational or practical value?`,
-        inspect: `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together. Either may be empty.`,
+        target,
+        question:
+          "How much concrete information value does this post provide to a reader trying to learn, understand a situation, solve a problem, or make a decision?",
+        desiredValue: "Use `policy.highValueContent` as the user's definition of valuable information.",
+        inspect,
         constraint:
-          "Judge only the supplied text. Do not infer value from the author, unseen media, or details that are merely implied."
+          "Judge information utility, not whether the subject or emotion is positive or negative. Use only supplied text; do not infer value from the author, unseen media, or implied details."
       },
-      criteria: [
-        "The supplied title and content are vague, sensational, purely emotional, routine sharing, or show no concrete informational value",
-        "The supplied title or content identifies a topic but offers little specific, reusable, or substantive value",
-        "The supplied title or content provides at least one useful fact, method, explanation, comparison, or concrete experience",
-        "The supplied title or content provides substantial, specific, reusable knowledge or unusually valuable first-hand experience"
-      ]
+      criteria: policy.contentValueCriteria
     };
 
-    questions[`low_quality_${index}`] = {
-      type: "noul",
-      instructions: {
-        question: `${target} Does this post match \`preference.lowValueContent\`?`,
-        inspect: `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together. Either may be empty.`
-      },
-      criteria: {
-        true: "The supplied title and content provide strong evidence of low-value content",
-        false: "The supplied title or content demonstrates concrete informational or practical value"
-      }
-    };
-
-    if (policy.filterCommercial) {
-      questions[`commercial_${index}`] = {
-        type: "noul",
-        instructions: {
-          question: `${target} Is this post's primary purpose selling, promotion, lead generation, or disguised advertising?`,
-          inspect: `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together.`
-        },
-        criteria: {
-          true: "Clear commercial promotion, price-led selling, merchant advertising, or lead generation",
-          false: "Not primarily commercial, or there is not enough evidence"
-        }
-      };
-    }
+    addSignalQuestion(
+      "commercial",
+      "Is the post's primary communication purpose commercial promotion or conversion?"
+    );
+    addSignalQuestion(
+      "conflictBait",
+      "Does the post deliberately provoke hostile argument or outrage as a primary engagement strategy?"
+    );
+    addSignalQuestion(
+      "polarization",
+      "Does the post promote hostile us-versus-them framing or sweeping antagonistic claims about identity or social groups?"
+    );
+    addSignalQuestion(
+      "emotionalVenting",
+      "Is the post mainly emotional venting or grievance without enough concrete context, reflection, or reusable insight?"
+    );
+    addSignalQuestion(
+      "negativeNoise",
+      "Is the post mainly negative emotional amplification without enough factual context, analysis, verification, or useful guidance?"
+    );
+    addSignalQuestion(
+      "engagementBait",
+      "Is the post mainly a sensational or low-information tactic to obtain clicks, comments, likes, follows, or guesses?"
+    );
 
     if (policy.blockedTopics.length) {
       questions[`blocked_${index}`] = {
         type: "noul",
         instructions: {
-          question: `${target} Is this post clearly about one or more topics in \`preference.blockedTopics\`?`,
-          inspect: `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together.`
+          target,
+          question: "Is this post clearly about one or more topics in `policy.blockedTopics`?",
+          inspect
         },
         criteria: {
           true: "The post clearly belongs to a blocked topic",
@@ -248,46 +419,69 @@ function wait(milliseconds) {
 
 function makeModelDecision(item, index, answers, policy) {
   const contentValue = readScore(answers, `content_value_${index}`);
-  const lowQuality = readNoul(answers, `low_quality_${index}`);
-  const commercial = policy.filterCommercial
-    ? readNoul(answers, `commercial_${index}`)
-    : 0;
+  const signals = Object.fromEntries(
+    SIGNAL_KEYS.map((key) => [
+      key,
+      policy.enabledSignals[key]
+        ? readNoul(answers, `${SIGNAL_RULES[key].answerPrefix}_${index}`)
+        : 0
+    ])
+  );
   const blocked = policy.blockedTopics.length
     ? readNoul(answers, `blocked_${index}`)
     : 0;
+  const hasReliableLowInformationValue =
+    contentValue.value <= policy.thresholds.maxContentValueForDrop &&
+    contentValue.confidence >= policy.thresholds.minContentValueConfidence;
 
   const reasonCodes = [];
-  if (blocked >= policy.thresholds.blocked) reasonCodes.push("BLOCKED_TOPIC");
-  if (commercial >= policy.thresholds.commercial) reasonCodes.push("COMMERCIAL");
-  if (lowQuality >= policy.thresholds.veryLowQuality) {
-    reasonCodes.push("LOW_QUALITY");
+  if (blocked >= policy.thresholds.blockedTopic) {
+    reasonCodes.push("BLOCKED_TOPIC");
   }
-  if (
-    lowQuality < policy.thresholds.veryLowQuality &&
-    contentValue.value <= policy.thresholds.contentValue &&
-    contentValue.confidence >= policy.thresholds.contentValueConfidence &&
-    lowQuality >= policy.thresholds.lowQuality
-  ) {
-    reasonCodes.push("LOW_VALUE_AND_QUALITY");
+  SIGNAL_KEYS.forEach((key) => {
+    const rule = SIGNAL_RULES[key];
+    if (signals[key] < policy.thresholds[key]) return;
+    if (rule.requiresLowInformationValue && !hasReliableLowInformationValue) return;
+    reasonCodes.push(rule.reasonCode);
+  });
+  if (hasReliableLowInformationValue) {
+    reasonCodes.push("LOW_INFORMATION_VALUE");
   }
 
+  const strongestRisk = Math.max(blocked, ...Object.values(signals));
+
   const keepScore = clamp(
-    contentValue.value * 0.65 +
-      (1 - lowQuality) * 0.35 -
-      commercial * 0.2 -
-      blocked * 0.5
+    contentValue.value * 0.7 + (1 - strongestRisk) * 0.3
   );
 
   return {
     key: item.key,
     action: reasonCodes.length ? "drop" : "keep",
+    evaluation: "jev",
     keepScore: Number(keepScore.toFixed(4)),
     contentValue: Number(contentValue.value.toFixed(4)),
     contentValueConfidence: Number(contentValue.confidence.toFixed(4)),
-    lowQuality: Number(lowQuality.toFixed(4)),
-    commercial: Number(commercial.toFixed(4)),
+    signals: Object.fromEntries(
+      SIGNAL_KEYS.map((key) => [key, Number(signals[key].toFixed(4))])
+    ),
     blocked: Number(blocked.toFixed(4)),
     reasonCodes
+  };
+}
+
+function makeRuleDecision(item, reasonCode, overrides = {}) {
+  return {
+    key: item.key,
+    action: "drop",
+    evaluation: "rule",
+    keepScore: 0,
+    contentValue: overrides.contentValue ?? 0,
+    contentValueConfidence: overrides.contentValueConfidence ?? 1,
+    signals: Object.fromEntries(
+      SIGNAL_KEYS.map((key) => [key, overrides.signals?.[key] ?? 0])
+    ),
+    blocked: 0,
+    reasonCodes: [reasonCode]
   };
 }
 
@@ -342,47 +536,19 @@ async function filterItems(items, policy, env) {
 
   items.forEach((item, inputIndex) => {
     if (item.isAds && policy.filterAds) {
-      decisions[inputIndex] = {
-        key: item.key,
-        action: "drop",
-        keepScore: 0,
-        contentValue: 0,
-        contentValueConfidence: 1,
-        lowQuality: 1,
-        commercial: 1,
-        blocked: 0,
-        reasonCodes: ["AD_FLAG"]
-      };
+      decisions[inputIndex] = makeRuleDecision(item, "AD_FLAG", {
+        signals: { commercial: 1 }
+      });
       return;
     }
 
     if (item.contentType === "live") {
-      decisions[inputIndex] = {
-        key: item.key,
-        action: "drop",
-        keepScore: 0,
-        contentValue: 0,
-        contentValueConfidence: 1,
-        lowQuality: 1,
-        commercial: 0,
-        blocked: 0,
-        reasonCodes: ["LIVE_CARD"]
-      };
+      decisions[inputIndex] = makeRuleDecision(item, "LIVE_CARD");
       return;
     }
 
     if (!item.title && !item.content) {
-      decisions[inputIndex] = {
-        key: item.key,
-        action: "drop",
-        keepScore: 0,
-        contentValue: 0,
-        contentValueConfidence: 1,
-        lowQuality: 1,
-        commercial: 0,
-        blocked: 0,
-        reasonCodes: ["NO_CONTENT"]
-      };
+      decisions[inputIndex] = makeRuleDecision(item, "NO_CONTENT");
       return;
     }
 

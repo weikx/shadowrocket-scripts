@@ -2,7 +2,7 @@
 
 > 文档类型：As-built（当前已实现方案）  
 > 更新时间：2026-09-23  
-> 策略版本：`3`  
+> 策略版本：`4`
 > TypeSafe 模型：`jev-1.13.0`
 
 ## 1. 背景与目标
@@ -215,17 +215,24 @@ Content-Type: application/json
     {
       "key": "0",
       "action": "keep",
-      "keepScore": 0.813,
+      "evaluation": "jev",
+      "keepScore": 0.806,
       "contentValue": 0.74,
       "contentValueConfidence": 0.77,
-      "lowQuality": 0.04,
-      "commercial": 0.02,
+      "signals": {
+        "commercial": 0.02,
+        "conflictBait": 0.05,
+        "polarization": 0.01,
+        "emotionalVenting": 0.04,
+        "negativeNoise": 0.03,
+        "engagementBait": 0.08
+      },
       "blocked": 0,
       "reasonCodes": []
     }
   ],
   "model": "jev-1.13.0",
-  "policyVersion": "3",
+  "policyVersion": "4",
   "durationMs": 719,
   "usage": {
     "input_tokens": 1047,
@@ -255,20 +262,23 @@ Worker 先在代码中处理不需要 AI 的情况：
 
 - 语言说明；
 - 证据边界；
+- 过滤目标；
 - 高价值内容定义；
-- 低价值内容定义；
-- 可选兴趣主题；
 - 可选屏蔽主题。
 
-当前实现按“只判断内容本身”的要求，不生成兴趣匹配问题；`interests` 仅作为策略结构中的兼容预留字段，不参与当前 `keep/drop`。`blockedTopics` 配置非空时才会生成屏蔽主题问题。
+当前实现只判断帖子内容，不生成兴趣匹配问题，也不向 Jev 提供作者昵称或作者身份。`blockedTopics` 配置非空时才会生成屏蔽主题问题。
 
 每个帖子生成相互独立的问题：
 
 | 问题 | 类型 | 输出 | 用途 |
 | --- | --- | --- | --- |
 | `content_value_N` | Score，4 级 | `score` + `confidence` | 衡量具体信息或实用价值 |
-| `low_quality_N` | Noul | `noul` | 判断是否符合低质量定义 |
 | `commercial_N` | Noul | `noul` | 判断主要目的是否为销售、推广或引流 |
+| `conflict_bait_N` | Noul | `noul` | 判断是否主要通过挑衅、羞辱或激怒他人来引战 |
+| `polarization_N` | Noul | `noul` | 判断是否用刻板印象、群体归罪或敌我叙事制造对立 |
+| `emotional_venting_N` | Noul | `noul` | 判断是否主要是缺少背景和反思的情绪宣泄 |
+| `negative_noise_N` | Noul | `noul` | 判断是否只放大恐惧、愤怒或绝望而缺少事实和建议 |
+| `engagement_bait_N` | Noul | `noul` | 判断是否以信息缺失的噱头、悬念或互动请求骗取参与 |
 | `blocked_N` | Noul | `noul` | 配置了屏蔽主题时判断是否命中 |
 
 这些问题在一次 TypeSafe 请求中并行计算。Jev 只能看到显式提供的文本字段，提示中要求它：
@@ -284,10 +294,10 @@ Worker 先在代码中处理不需要 AI 的情况：
 
 | 原始等级 | 归一化值 | 含义 |
 | ---: | ---: | --- |
-| 0 | 0 | 空泛、耸动、纯情绪、日常打卡或没有具体价值 |
-| 1 | 约 0.33 | 能识别主题，但具体性和复用价值较低 |
-| 2 | 约 0.67 | 至少包含一个有用事实、方法、解释、对比或具体经验 |
-| 3 | 1 | 包含大量具体、可复用知识或高价值一手经验 |
+| 0 | 0 | 没有可用信息：实质为空、模糊、纯情绪、口号、悬念或无上下文分享 |
+| 1 | 约 0.33 | 提到了话题、观点或经历，但缺少具体背景、证据、解释或可复用结论 |
+| 2 | 约 0.67 | 至少提供一项具体事实、解释、对比、方法、建议或一手经验 |
+| 3 | 1 | 提供多项事实、步骤、数据、有依据的分析或特别有用的一手经验 |
 
 Jev 返回的 Score 可以落在相邻等级之间。Worker 用 `score / 3` 归一化为 `0～1`，并保留 Score 的 `confidence`。
 
@@ -305,27 +315,32 @@ Noul 没有独立的 `confidence` 字段，代码不会为它构造伪 confidenc
 
 ```json
 {
-  "blocked": 0.8,
+  "blockedTopic": 0.8,
   "commercial": 0.75,
-  "veryLowQuality": 0.8,
-  "lowQuality": 0.6,
-  "contentValue": 0.5,
-  "contentValueConfidence": 0.35
+  "conflictBait": 0.7,
+  "polarization": 0.7,
+  "emotionalVenting": 0.8,
+  "negativeNoise": 0.8,
+  "engagementBait": 0.75,
+  "maxContentValueForDrop": 0.45,
+  "minContentValueConfidence": 0.4
 }
 ```
 
 普通帖子满足任意条件即得到 Worker 的 `drop`：
 
-1. `blocked >= 0.8`，原因 `BLOCKED_TOPIC`；
+1. `blocked >= 0.80`，原因 `BLOCKED_TOPIC`；
 2. `commercial >= 0.75`，原因 `COMMERCIAL`；
-3. `lowQuality >= 0.8`，原因 `LOW_QUALITY`；
-4. 同时满足以下条件，原因 `LOW_VALUE_AND_QUALITY`：
-   - `lowQuality < 0.8`；
-   - `contentValue <= 0.5`；
-   - `contentValueConfidence >= 0.35`；
-   - `lowQuality >= 0.6`。
+3. `conflictBait >= 0.70`，原因 `CONFLICT_BAIT`；
+4. `polarization >= 0.70`，原因 `POLARIZATION`；
+5. `contentValue <= 0.45` 且 `contentValueConfidence >= 0.40`，原因 `LOW_INFORMATION_VALUE`；
+6. 在满足第 5 条的前提下，`emotionalVenting >= 0.80`，追加原因 `EMOTIONAL_VENTING`；
+7. 在满足第 5 条的前提下，`negativeNoise >= 0.80`，追加原因 `NEGATIVE_NOISE`；
+8. 在满足第 5 条的前提下，`engagementBait >= 0.75`，追加原因 `ENGAGEMENT_BAIT`。
 
-没有任何原因码时得到 `keep`。当前默认 `blockedTopics=[]`，因此未配置自定义策略时不会生成 `blocked_N` 问题。
+其中第 2～4 条是硬语义规则：高概率营销、引战或群体对立即使带有部分信息，也会过滤。第 6～8 条是带信息价值保护的软语义规则：内容主题负面或语气激烈，并不自动等于垃圾。灾害预警、诈骗分析、疾病科普、风险分析等帖子，如果提供了足够事实、解释或行动建议，不会仅因“负面”而过滤。
+
+没有任何原因码时得到 `keep`。当前默认 `blockedTopics=[]`，因此未配置自定义策略时不会生成 `blocked_N` 问题。一个帖子可同时命中多个原因码，这正是使用多个独立 Noul 而不是互斥分类的目的。
 
 ### 7.5 综合保留分
 
@@ -333,16 +348,14 @@ Worker 还会计算：
 
 ```text
 keepScore = clamp(
-  contentValue × 0.65
-  + (1 - lowQuality) × 0.35
-  - commercial × 0.20
-  - blocked × 0.50,
+  contentValue × 0.70
+  + (1 - strongestRisk) × 0.30,
   0,
   1
 )
 ```
 
-`keepScore` 不直接决定 Worker 的 `keep/drop`。它用于客户端触发最低保留保护时，在多个语义 `drop` 中优先删除分数最低的项目。
+`strongestRisk` 是屏蔽主题和六个语义信号中的最大值。`keepScore` 不直接决定 Worker 的 `keep/drop`；它只在客户端触发最低保留保护时，用于从多个语义 `drop` 中优先删除“信息价值更低且风险更强”的项目。
 
 ## 8. 客户端结果应用
 
@@ -383,7 +396,7 @@ minimum = max(
 | 20 | 8 |
 | 30 | 12 |
 
-广告和直播先固定删除，因此它们较多时，最终数量允许低于上表目标。`NO_CONTENT`、营销和低质量等其他 `drop` 仍受最低保留保护。
+广告和直播先固定删除，因此它们较多时，最终数量允许低于上表目标。`NO_CONTENT` 和各类 Jev 语义原因等其他 `drop` 仍受最低保留保护。
 
 这意味着观察模式中的 `[❌移除]` 是 Worker 的语义建议，不保证在过滤模式下全部真正删除；固定广告和直播除外。
 
@@ -393,7 +406,7 @@ minimum = max(
 
 - **代码控制工作流**：拦截、鉴权、固定规则、阈值、排序和删除都由普通代码完成；
 - **结构化 state**：标题、正文、分类、内容类型和策略分别使用命名字段；
-- **原子问题**：内容价值、低质量、营销和屏蔽主题分别判断；
+- **原子问题**：内容价值和六个不同语义风险分别判断，避免一个模糊的“低质量”问题承担所有含义；
 - **一次并行请求**：同页全部独立问题一次提交，避免逐帖串行调用；
 - **正确使用 primitive**：程度使用 Score，是否成立使用 Noul；
 - **显式处理不确定性**：低内容价值规则同时检查 Score confidence；
@@ -484,7 +497,7 @@ npx wrangler secret put FILTER_POLICY_JSON \
   --config worker/wrangler.jsonc < worker/policy.local.json
 ```
 
-策略覆盖支持旧字段 `relevance` 和 `relevanceConfidence`，会分别映射为 `contentValue` 和 `contentValueConfidence`，便于从策略版本 2 平滑迁移。
+策略覆盖继续兼容旧字段 `relevance` / `contentValue` 和 `relevanceConfidence` / `contentValueConfidence`，分别映射为 `maxContentValueForDrop` 和 `minContentValueConfidence`。旧 `filterCommercial: false` 也会映射为关闭 `enabledSignals.commercial`。其余旧版 `lowQuality` 阈值不再参与版本 4 判断。
 
 请求中的 `schemaVersion: 1` 当前由客户端携带，但 Worker 尚未据此做版本分流或拒绝不兼容版本；这是后续协议演进时需要补齐的校验点。
 
@@ -502,7 +515,11 @@ npx wrangler secret put FILTER_POLICY_JSON \
 - 每帖问题索引和结构；
 - 广告、直播、空内容确定性规则；
 - 空标题但有正文进入 Jev；
-- 策略版本 3 和新旧阈值字段兼容；
+- 策略版本 4、新信号开关和旧内容价值阈值字段兼容；
+- 有信息价值的负面内容保留；
+- 低价值负面噪音产生可解释的多个原因码；
+- 低信息价值可单独触发过滤，置信度不足时不触发；
+- 营销、引战和群体对立作为硬语义规则过滤；
 - TypeSafe `429/529` 重试；
 - TypeSafe 漏回答案时返回失败。
 
@@ -513,7 +530,7 @@ npm test
 npm run worker:deploy -- --dry-run
 ```
 
-当前自动化测试为 13 项。线上曾使用测试文本验证：空标题但有具体正文的项目会进入 Jev 并得到正常语义决策；标题和正文都为空时得到 `NO_CONTENT`。
+当前自动化测试覆盖上述规则。线上是否生效以最新 Worker 部署版本为准；本地测试不会调用真实 Jev，而是使用固定结构化响应验证组合逻辑。
 
 ## 14. 已知限制
 
