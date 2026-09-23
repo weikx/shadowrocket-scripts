@@ -4,7 +4,7 @@
 
 [Script]
 # 导入后请在本地编辑 argument：替换 endpoint 和 token；observe 模式会显示“应保留/应移除”，并在应移除帖子的标题中显示原因；确认效果后把 mode=observe 改为 mode=filter。
-小红书 Feed Jev 过滤 = type=http-response, pattern=^https:\/\/rec\.xiaohongshu\.com\/api\/sns\/v6\/homefeed(?:\?|$), requires-body=1, max-size=0, timeout=10, script-path=https://raw.githubusercontent.com/weikx/shadowrocket-scripts/main/shadowrocket/xhs-feed-jev.js, argument=endpoint=https%3A%2F%2FREPLACE_WITH_YOUR_WORKER.workers.dev%2Ffilter&token=REPLACE_WITH_CLIENT_TOKEN&mode=observe&timeoutMs=6000&minKeep=6&minKeepRatio=0.4
+小红书 Feed Jev 过滤 = type=http-response, pattern=^https:\/\/rec\.xiaohongshu\.com\/api\/sns\/v6\/homefeed(?:\?|$), requires-body=1, max-size=0, timeout=10, script-path=https://raw.githubusercontent.com/weikx/shadowrocket-scripts/main/shadowrocket/xhs-feed-jev.js?v=20260923-2, argument=endpoint=https%3A%2F%2FREPLACE_WITH_YOUR_WORKER.workers.dev%2Ffilter&token=REPLACE_WITH_CLIENT_TOKEN&mode=observe&timeoutMs=6000&minKeep=6&minKeepRatio=0.4
 
 [MITM]
 hostname = %APPEND% rec.xiaohongshu.com

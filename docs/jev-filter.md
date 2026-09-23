@@ -150,6 +150,8 @@ argument=endpoint=https%3A%2F%2Fxhs-jev-filter.example.workers.dev%2Ffilter&toke
 
 然后安装并启用该本地 Module。之前安装的 Shadowrocket HTTPS 解密证书和 `rec.xiaohongshu.com` MITM 配置可以继续使用。
 
+如果 GitHub 脚本更新后手机仍显示旧文案或旧行为，说明 Shadowrocket 还在使用已缓存的远程脚本。重新更新或安装 Module，使 `script-path` 包含当前版本参数（例如 `?v=20260923-2`），然后停用并重新启用 Module。成功加载本版后，Shadowrocket 日志会包含 `scriptVersion=2026.09.23.2`。
+
 注意：Module 中的 `CLIENT_TOKEN` 不要提交到公开 GitHub。它不是 TypeSafe API Key，但泄露后别人可以消耗你的 Jev 调用额度。
 
 ## 5. 观察与正式过滤

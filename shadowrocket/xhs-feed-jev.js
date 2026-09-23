@@ -12,6 +12,7 @@
  */
 
 (function () {
+  var SCRIPT_VERSION = "2026.09.23.2";
   var DEFAULT_CONFIG = {
     endpoint: "",
     token: "",
@@ -351,6 +352,8 @@
               dropped +
               " model=" +
               String(result.model || "rules-only") +
+              " scriptVersion=" +
+              SCRIPT_VERSION +
               " durationMs=" +
               String(result.durationMs || 0)
           );
