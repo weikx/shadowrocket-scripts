@@ -29,6 +29,11 @@ const signalAnswerNames = [
   "negative_noise",
   "engagement_bait"
 ];
+const preserveAnswerNames = [
+  "experience_sharing",
+  "lifestyle_sharing",
+  "photography_sharing"
+];
 
 function modelAnswers(index, options = {}) {
   const answers = {
@@ -39,6 +44,12 @@ function modelAnswers(index, options = {}) {
     }
   };
   signalAnswerNames.forEach((name) => {
+    answers[`${name}_${index}`] = {
+      type: "noul",
+      noul: options[name] ?? 0.05
+    };
+  });
+  preserveAnswerNames.forEach((name) => {
     answers[`${name}_${index}`] = {
       type: "noul",
       noul: options[name] ?? 0.05
@@ -101,7 +112,10 @@ test("questions are atomic and include the post index in instructions", () => {
     "polarization_0",
     "emotional_venting_0",
     "negative_noise_0",
-    "engagement_bait_0"
+    "engagement_bait_0",
+    "experience_sharing_0",
+    "lifestyle_sharing_0",
+    "photography_sharing_0"
   ]);
   assert.match(JSON.stringify(questions.content_value_0.instructions), /posts\[0\]/);
   assert.match(JSON.stringify(questions.content_value_0.instructions), /title/);
@@ -110,6 +124,7 @@ test("questions are atomic and include the post index in instructions", () => {
   assert.equal(questions.content_value_0.criteria.length, 4);
   assert.equal(questions.commercial_0.type, "noul");
   assert.deepEqual(Object.keys(questions.commercial_0.criteria), ["true", "false"]);
+  assert.equal(questions.experience_sharing_0.type, "noul");
 });
 
 test("strict defaults remove live cards and never send author names to Jev", async (t) => {
@@ -179,7 +194,7 @@ test("strict defaults remove live cards and never send author names to Jev", asy
     category: "Unknown category",
     contentType: "normal"
   });
-  assert.equal(Object.keys(requestPayload.questions).length, 21);
+  assert.equal(Object.keys(requestPayload.questions).length, 30);
   assert.deepEqual(
     result.decisions.map(({ key, action, reasonCodes }) => ({ key, action, reasonCodes })),
     [
@@ -199,13 +214,16 @@ test("strict defaults remove live cards and never send author names to Jev", asy
 
 test("strict default thresholds are more selective", () => {
   const policy = parsePolicy();
-  assert.equal(policy.version, "4");
+  assert.equal(policy.version, "5");
   assert.equal(policy.thresholds.commercial, 0.75);
   assert.equal(policy.thresholds.conflictBait, 0.7);
   assert.equal(policy.thresholds.polarization, 0.7);
   assert.equal(policy.thresholds.emotionalVenting, 0.8);
   assert.equal(policy.thresholds.negativeNoise, 0.8);
   assert.equal(policy.thresholds.engagementBait, 0.75);
+  assert.equal(policy.thresholds.experienceSharing, 0.55);
+  assert.equal(policy.thresholds.lifestyleSharing, 0.6);
+  assert.equal(policy.thresholds.photographySharing, 0.6);
   assert.equal(policy.thresholds.maxContentValueForDrop, 0.45);
   assert.equal(policy.thresholds.minContentValueConfidence, 0.4);
 });
@@ -379,6 +397,129 @@ test("uncertain low information score does not remove a post by itself", async (
   assert.deepEqual(result.decisions[0].reasonCodes, []);
 });
 
+test("experience, lifestyle, and photography sharing override low-value soft filters", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: {
+          ...modelAnswers(0, {
+            contentValue: 0.6,
+            contentValueConfidence: 0.9,
+            emotional_venting: 0.9,
+            negative_noise: 0.9,
+            engagement_bait: 0.9,
+            experience_sharing: 0.82
+          }),
+          ...modelAnswers(1, {
+            contentValue: 0.4,
+            contentValueConfidence: 0.9,
+            engagement_bait: 0.88,
+            lifestyle_sharing: 0.86
+          }),
+          ...modelAnswers(2, {
+            contentValue: 0.3,
+            contentValueConfidence: 0.9,
+            engagement_bait: 0.9,
+            photography_sharing: 0.91
+          })
+        },
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "第一次独自租房踩过的坑",
+        content: "记录我的看房经历和最后的选择。",
+        contentType: "normal",
+        isAds: false
+      },
+      {
+        key: "1",
+        title: "今天给猫做了小蛋糕",
+        content: "周末生活记录。",
+        contentType: "normal",
+        isAds: false
+      },
+      {
+        key: "2",
+        title: "雨后的上海街拍",
+        content: "记录今天最喜欢的一组夜景。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    result.decisions.map(({ action, reasonCodes, keepReasonCodes }) => ({
+      action,
+      reasonCodes,
+      keepReasonCodes
+    })),
+    [
+      { action: "keep", reasonCodes: [], keepReasonCodes: ["EXPERIENCE_SHARING"] },
+      { action: "keep", reasonCodes: [], keepReasonCodes: ["LIFESTYLE_SHARING"] },
+      { action: "keep", reasonCodes: [], keepReasonCodes: ["PHOTOGRAPHY_SHARING"] }
+    ]
+  );
+});
+
+test("preserve signals do not override conflict bait or polarization", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: modelAnswers(0, {
+          contentValue: 0.6,
+          contentValueConfidence: 0.9,
+          conflict_bait: 0.82,
+          polarization: 0.79,
+          lifestyle_sharing: 0.9
+        }),
+        usage: { input_tokens: 100, output_tokens: 20 }
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    filterRequest([
+      {
+        key: "0",
+        title: "生活分享",
+        content: "用群体攻击和挑衅制造争吵。",
+        contentType: "normal",
+        isAds: false
+      }
+    ]),
+    baseEnv
+  );
+  const result = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(result.decisions[0].action, "drop");
+  assert.deepEqual(result.decisions[0].reasonCodes, [
+    "CONFLICT_BAIT",
+    "POLARIZATION"
+  ]);
+  assert.deepEqual(result.decisions[0].keepReasonCodes, ["LIFESTYLE_SHARING"]);
+});
+
 test("commercial, conflict bait, and polarization are hard filter signals", async (t) => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -457,6 +598,11 @@ test("disabled semantic signals are neither asked nor required", async (t) => {
             "negativeNoise",
             "engagementBait"
           ].map((key) => [key, false])
+        ),
+        enabledPreserveSignals: Object.fromEntries(
+          ["experienceSharing", "lifestyleSharing", "photographySharing"].map(
+            (key) => [key, false]
+          )
         )
       })
     }

@@ -2,7 +2,7 @@
 
 > 文档类型：As-built（当前已实现方案）  
 > 更新时间：2026-09-23  
-> 策略版本：`4`
+> 策略版本：`5`
 > TypeSafe 模型：`jev-1.13.0`
 
 ## 1. 背景与目标
@@ -227,12 +227,18 @@ Content-Type: application/json
         "negativeNoise": 0.03,
         "engagementBait": 0.08
       },
+      "preserveSignals": {
+        "experienceSharing": 0.86,
+        "lifestyleSharing": 0.12,
+        "photographySharing": 0.03
+      },
       "blocked": 0,
-      "reasonCodes": []
+      "reasonCodes": [],
+      "keepReasonCodes": ["EXPERIENCE_SHARING"]
     }
   ],
   "model": "jev-1.13.0",
-  "policyVersion": "4",
+  "policyVersion": "5",
   "durationMs": 719,
   "usage": {
     "input_tokens": 1047,
@@ -279,6 +285,9 @@ Worker 先在代码中处理不需要 AI 的情况：
 | `emotional_venting_N` | Noul | `noul` | 判断是否主要是缺少背景和反思的情绪宣泄 |
 | `negative_noise_N` | Noul | `noul` | 判断是否只放大恐惧、愤怒或绝望而缺少事实和建议 |
 | `engagement_bait_N` | Noul | `noul` | 判断是否以信息缺失的噱头、悬念或互动请求骗取参与 |
+| `experience_sharing_N` | Noul | `noul` | 判断是否为真实经历、过程、结果、测评、教训或个人叙述 |
+| `lifestyle_sharing_N` | Noul | `noul` | 判断是否为真实的日常生活或个人审美分享 |
+| `photography_sharing_N` | Noul | `noul` | 判断摄影或视觉创作本身是否为内容主体 |
 | `blocked_N` | Noul | `noul` | 配置了屏蔽主题时判断是否命中 |
 
 这些问题在一次 TypeSafe 请求中并行计算。Jev 只能看到显式提供的文本字段，提示中要求它：
@@ -322,23 +331,32 @@ Noul 没有独立的 `confidence` 字段，代码不会为它构造伪 confidenc
   "emotionalVenting": 0.8,
   "negativeNoise": 0.8,
   "engagementBait": 0.75,
+  "experienceSharing": 0.55,
+  "lifestyleSharing": 0.6,
+  "photographySharing": 0.6,
   "maxContentValueForDrop": 0.45,
   "minContentValueConfidence": 0.4
 }
 ```
 
-普通帖子满足任意条件即得到 Worker 的 `drop`：
+先计算三个保留信号：
+
+- `experienceSharing >= 0.55`：真实经验分享；
+- `lifestyleSharing >= 0.60`：真实生活分享；
+- `photographySharing >= 0.60`：摄影或视觉创作分享。
+
+任意一项成立，帖子获得保留保护。然后执行下列规则：
 
 1. `blocked >= 0.80`，原因 `BLOCKED_TOPIC`；
 2. `commercial >= 0.75`，原因 `COMMERCIAL`；
 3. `conflictBait >= 0.70`，原因 `CONFLICT_BAIT`；
 4. `polarization >= 0.70`，原因 `POLARIZATION`；
-5. `contentValue <= 0.45` 且 `contentValueConfidence >= 0.40`，原因 `LOW_INFORMATION_VALUE`；
-6. 在满足第 5 条的前提下，`emotionalVenting >= 0.80`，追加原因 `EMOTIONAL_VENTING`；
-7. 在满足第 5 条的前提下，`negativeNoise >= 0.80`，追加原因 `NEGATIVE_NOISE`；
-8. 在满足第 5 条的前提下，`engagementBait >= 0.75`，追加原因 `ENGAGEMENT_BAIT`。
+5. 没有保留保护，且 `contentValue <= 0.45`、`contentValueConfidence >= 0.40`，原因 `LOW_INFORMATION_VALUE`；
+6. 没有保留保护、满足低信息价值，且 `emotionalVenting >= 0.80`，追加原因 `EMOTIONAL_VENTING`；
+7. 没有保留保护、满足低信息价值，且 `negativeNoise >= 0.80`，追加原因 `NEGATIVE_NOISE`；
+8. 没有保留保护、满足低信息价值，且 `engagementBait >= 0.75`，追加原因 `ENGAGEMENT_BAIT`。
 
-其中第 2～4 条是硬语义规则：高概率营销、引战或群体对立即使带有部分信息，也会过滤。第 6～8 条是带信息价值保护的软语义规则：内容主题负面或语气激烈，并不自动等于垃圾。灾害预警、诈骗分析、疾病科普、风险分析等帖子，如果提供了足够事实、解释或行动建议，不会仅因“负面”而过滤。
+其中第 2～4 条是硬语义规则：高概率营销、引战或群体对立即使同时属于生活、摄影或经验分享，也会过滤。第 5～8 条是软语义规则，会被三个正向保留信号覆盖。内容主题负面或语气激烈，并不自动等于垃圾；灾害预警、诈骗分析、疾病科普、风险分析等帖子，如果提供了足够事实、解释或行动建议，也不会仅因“负面”而过滤。
 
 没有任何原因码时得到 `keep`。当前默认 `blockedTopics=[]`，因此未配置自定义策略时不会生成 `blocked_N` 问题。一个帖子可同时命中多个原因码，这正是使用多个独立 Noul 而不是互斥分类的目的。
 
@@ -407,7 +425,7 @@ minimum = max(
 
 - **代码控制工作流**：拦截、鉴权、固定规则、阈值、排序和删除都由普通代码完成；
 - **结构化 state**：标题、正文、分类、内容类型和策略分别使用命名字段；
-- **原子问题**：内容价值和六个不同语义风险分别判断，避免一个模糊的“低质量”问题承担所有含义；
+- **原子问题**：内容价值、六个过滤信号和三个保留信号分别判断，避免一个模糊的“低质量”问题承担所有含义；
 - **一次并行请求**：同页全部独立问题一次提交，避免逐帖串行调用；
 - **正确使用 primitive**：程度使用 Score，是否成立使用 Noul；
 - **显式处理不确定性**：低内容价值规则同时检查 Score confidence；
@@ -498,7 +516,7 @@ npx wrangler secret put FILTER_POLICY_JSON \
   --config worker/wrangler.jsonc < worker/policy.local.json
 ```
 
-策略覆盖继续兼容旧字段 `relevance` / `contentValue` 和 `relevanceConfidence` / `contentValueConfidence`，分别映射为 `maxContentValueForDrop` 和 `minContentValueConfidence`。旧 `filterCommercial: false` 也会映射为关闭 `enabledSignals.commercial`。其余旧版 `lowQuality` 阈值不再参与版本 4 判断。
+策略覆盖继续兼容旧字段 `relevance` / `contentValue` 和 `relevanceConfidence` / `contentValueConfidence`，分别映射为 `maxContentValueForDrop` 和 `minContentValueConfidence`。旧 `filterCommercial: false` 也会映射为关闭 `enabledSignals.commercial`。其余旧版 `lowQuality` 阈值不再参与版本 5 判断。
 
 请求中的 `schemaVersion: 1` 当前由客户端携带，但 Worker 尚未据此做版本分流或拒绝不兼容版本；这是后续协议演进时需要补齐的校验点。
 
@@ -516,10 +534,12 @@ npx wrangler secret put FILTER_POLICY_JSON \
 - 每帖问题索引和结构；
 - 广告、直播、空内容确定性规则；
 - 空标题但有正文进入 Jev；
-- 策略版本 4、新信号开关和旧内容价值阈值字段兼容；
+- 策略版本 5、新信号开关和旧内容价值阈值字段兼容；
 - 有信息价值的负面内容保留；
 - 低价值负面噪音产生可解释的多个原因码；
 - 低信息价值可单独触发过滤，置信度不足时不触发；
+- 经验、生活和摄影分享覆盖低信息价值等软过滤原因；
+- 正向保留信号不能覆盖广告、引战和群体对立；
 - 营销、引战和群体对立作为硬语义规则过滤；
 - TypeSafe `429/529` 重试；
 - TypeSafe 漏回答案时返回失败。

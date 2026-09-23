@@ -1,5 +1,5 @@
 {
-  "version": "4",
+  "version": "5",
   "blockedTopics": [],
   "highValueDescription": "帮助读者了解事实、理解问题或做出判断，提供明确的背景、解释、方法、步骤、数据、对比、可执行建议或可复用的一手经验",
   "contentValueCriteria": [
@@ -43,6 +43,25 @@
       "false": "A question or strong headline is not bait when the post supplies useful context or seeks a concrete, answerable exchange"
     }
   },
+  "enabledPreserveSignals": {
+    "experienceSharing": true,
+    "lifestyleSharing": true,
+    "photographySharing": true
+  },
+  "preserveSignalDefinitions": {
+    "experienceSharing": {
+      "true": "The post shares a genuine first-hand experience, process, outcome, review, lesson, observation, or personal account. It does not need to be instructional or universally reusable",
+      "false": "It contains no recognizable first-hand experience and is only a slogan, unsupported assertion, vague question, copied claim, or promotional pitch"
+    },
+    "lifestyleSharing": {
+      "true": "The post genuinely documents or shares an everyday-life moment, routine, meal, trip, home, pet, family activity, outfit, hobby, or personal taste. Ordinary life sharing may be worth preserving even without a tutorial or broad informational value",
+      "false": "It is not meaningfully about a personal everyday-life moment, or the apparent lifestyle framing is primarily an advertisement, hostile provocation, or empty engagement tactic"
+    },
+    "photographySharing": {
+      "true": "Photography or visual creation is itself the central subject or creative output, such as a photo diary, scenery, portrait, street photography, composition, camera practice, editing, or a clearly identified photographic work. A short caption can still qualify",
+      "false": "There is no supplied textual evidence that photography or visual creation is central. Do not infer photography merely because an unseen image or video may exist"
+    }
+  },
   "thresholds": {
     "blockedTopic": 0.8,
     "commercial": 0.75,
@@ -51,6 +70,9 @@
     "emotionalVenting": 0.8,
     "negativeNoise": 0.8,
     "engagementBait": 0.75,
+    "experienceSharing": 0.55,
+    "lifestyleSharing": 0.6,
+    "photographySharing": 0.6,
     "maxContentValueForDrop": 0.45,
     "minContentValueConfidence": 0.4
   }

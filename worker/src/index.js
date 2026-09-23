@@ -8,6 +8,11 @@ const SIGNAL_KEYS = Object.freeze([
   "negativeNoise",
   "engagementBait"
 ]);
+const PRESERVE_SIGNAL_KEYS = Object.freeze([
+  "experienceSharing",
+  "lifestyleSharing",
+  "photographySharing"
+]);
 
 const SIGNAL_RULES = Object.freeze({
   commercial: Object.freeze({
@@ -39,6 +44,21 @@ const SIGNAL_RULES = Object.freeze({
     answerPrefix: "engagement_bait",
     reasonCode: "ENGAGEMENT_BAIT",
     requiresLowInformationValue: true
+  })
+});
+
+const PRESERVE_SIGNAL_RULES = Object.freeze({
+  experienceSharing: Object.freeze({
+    answerPrefix: "experience_sharing",
+    reasonCode: "EXPERIENCE_SHARING"
+  }),
+  lifestyleSharing: Object.freeze({
+    answerPrefix: "lifestyle_sharing",
+    reasonCode: "LIFESTYLE_SHARING"
+  }),
+  photographySharing: Object.freeze({
+    answerPrefix: "photography_sharing",
+    reasonCode: "PHOTOGRAPHY_SHARING"
   })
 });
 
@@ -88,8 +108,29 @@ const DEFAULT_SIGNAL_DEFINITIONS = Object.freeze({
   }
 });
 
+const DEFAULT_PRESERVE_SIGNAL_DEFINITIONS = Object.freeze({
+  experienceSharing: {
+    true:
+      "The post shares a genuine first-hand experience, process, outcome, review, lesson, observation, or personal account. It does not need to be instructional or universally reusable",
+    false:
+      "It contains no recognizable first-hand experience and is only a slogan, unsupported assertion, vague question, copied claim, or promotional pitch"
+  },
+  lifestyleSharing: {
+    true:
+      "The post genuinely documents or shares an everyday-life moment, routine, meal, trip, home, pet, family activity, outfit, hobby, or personal taste. Ordinary life sharing may be worth preserving even without a tutorial or broad informational value",
+    false:
+      "It is not meaningfully about a personal everyday-life moment, or the apparent lifestyle framing is primarily an advertisement, hostile provocation, or empty engagement tactic"
+  },
+  photographySharing: {
+    true:
+      "Photography or visual creation is itself the central subject or creative output, such as a photo diary, scenery, portrait, street photography, composition, camera practice, editing, or a clearly identified photographic work. A short caption can still qualify",
+    false:
+      "There is no supplied textual evidence that photography or visual creation is central. Do not infer photography merely because an unseen image or video may exist"
+  }
+});
+
 const DEFAULT_POLICY = Object.freeze({
-  version: "4",
+  version: "5",
   blockedTopics: [],
   highValueDescription:
     "帮助读者了解事实、理解问题或做出判断，提供明确的背景、解释、方法、步骤、数据、对比、可执行建议或可复用的一手经验",
@@ -104,6 +145,12 @@ const DEFAULT_POLICY = Object.freeze({
     engagementBait: true
   }),
   signalDefinitions: DEFAULT_SIGNAL_DEFINITIONS,
+  enabledPreserveSignals: Object.freeze({
+    experienceSharing: true,
+    lifestyleSharing: true,
+    photographySharing: true
+  }),
+  preserveSignalDefinitions: DEFAULT_PRESERVE_SIGNAL_DEFINITIONS,
   thresholds: {
     blockedTopic: 0.8,
     commercial: 0.75,
@@ -112,6 +159,9 @@ const DEFAULT_POLICY = Object.freeze({
     emotionalVenting: 0.8,
     negativeNoise: 0.8,
     engagementBait: 0.75,
+    experienceSharing: 0.55,
+    lifestyleSharing: 0.6,
+    photographySharing: 0.6,
     maxContentValueForDrop: 0.45,
     minContentValueConfidence: 0.4
   }
@@ -147,31 +197,26 @@ function parseContentValueCriteria(value) {
   return criteria.every(Boolean) ? criteria : DEFAULT_CONTENT_VALUE_CRITERIA;
 }
 
-function parseEnabledSignals(value, legacyPolicy) {
+function parseEnabledSignals(value, keys, defaults) {
   const custom = value && typeof value === "object" ? value : {};
   return Object.fromEntries(
-    SIGNAL_KEYS.map((key) => {
+    keys.map((key) => {
       if (typeof custom[key] === "boolean") return [key, custom[key]];
-      if (key === "commercial" && legacyPolicy.filterCommercial === false) {
-        return [key, false];
-      }
-      return [key, DEFAULT_POLICY.enabledSignals[key]];
+      return [key, defaults[key]];
     })
   );
 }
 
-function parseSignalDefinitions(value) {
+function parseSignalDefinitions(value, keys, defaults) {
   const custom = value && typeof value === "object" ? value : {};
   return Object.fromEntries(
-    SIGNAL_KEYS.map((key) => {
+    keys.map((key) => {
       const entry = custom[key] && typeof custom[key] === "object" ? custom[key] : {};
       return [
         key,
         {
-          true:
-            cleanString(entry.true, 1000) || DEFAULT_SIGNAL_DEFINITIONS[key].true,
-          false:
-            cleanString(entry.false, 1000) || DEFAULT_SIGNAL_DEFINITIONS[key].false
+          true: cleanString(entry.true, 1000) || defaults[key].true,
+          false: cleanString(entry.false, 1000) || defaults[key].false
         }
       ];
     })
@@ -198,8 +243,32 @@ function parsePolicy(raw) {
       cleanString(custom.highValueDescription, 1000) || DEFAULT_POLICY.highValueDescription,
     contentValueCriteria: parseContentValueCriteria(custom.contentValueCriteria),
     filterAds: custom.filterAds !== false,
-    enabledSignals: parseEnabledSignals(custom.enabledSignals, custom),
-    signalDefinitions: parseSignalDefinitions(custom.signalDefinitions),
+    enabledSignals: {
+      ...parseEnabledSignals(
+        custom.enabledSignals,
+        SIGNAL_KEYS,
+        DEFAULT_POLICY.enabledSignals
+      ),
+      commercial:
+        typeof custom.enabledSignals?.commercial === "boolean"
+          ? custom.enabledSignals.commercial
+          : custom.filterCommercial !== false
+    },
+    signalDefinitions: parseSignalDefinitions(
+      custom.signalDefinitions,
+      SIGNAL_KEYS,
+      DEFAULT_SIGNAL_DEFINITIONS
+    ),
+    enabledPreserveSignals: parseEnabledSignals(
+      custom.enabledPreserveSignals,
+      PRESERVE_SIGNAL_KEYS,
+      DEFAULT_POLICY.enabledPreserveSignals
+    ),
+    preserveSignalDefinitions: parseSignalDefinitions(
+      custom.preserveSignalDefinitions,
+      PRESERVE_SIGNAL_KEYS,
+      DEFAULT_PRESERVE_SIGNAL_DEFINITIONS
+    ),
     thresholds: {
       blockedTopic: clamp(
         finiteNumber(
@@ -229,6 +298,24 @@ function parsePolicy(raw) {
         finiteNumber(
           thresholds.engagementBait,
           DEFAULT_POLICY.thresholds.engagementBait
+        )
+      ),
+      experienceSharing: clamp(
+        finiteNumber(
+          thresholds.experienceSharing,
+          DEFAULT_POLICY.thresholds.experienceSharing
+        )
+      ),
+      lifestyleSharing: clamp(
+        finiteNumber(
+          thresholds.lifestyleSharing,
+          DEFAULT_POLICY.thresholds.lifestyleSharing
+        )
+      ),
+      photographySharing: clamp(
+        finiteNumber(
+          thresholds.photographySharing,
+          DEFAULT_POLICY.thresholds.photographySharing
         )
       ),
       maxContentValueForDrop: clamp(
@@ -285,7 +372,7 @@ function buildState(posts, policy) {
   return {
     language: "Chinese social-media posts; judge the supplied text as written",
     evaluationGoal:
-      "Keep posts that help a reader learn facts, understand a situation, solve a problem, or make a decision. Judge information utility separately from whether the topic or emotion is positive or negative.",
+      "Keep posts that help a reader learn facts, understand a situation, solve a problem, or make a decision. Also preserve genuine first-hand experiences, personal lifestyle sharing, and photography or visual-creation sharing even when they are not broadly instructional. Judge information utility separately from whether the topic or emotion is positive or negative.",
     evidenceLimit:
       "Judge only the supplied title, content, category, and content type. Consider title and content together; either field may be empty. Do not penalize a missing title when the content itself provides useful evidence. Do not use or infer author identity. Do not infer unseen image, video, or other details.",
     policy: {
@@ -309,6 +396,7 @@ function buildQuestions(posts, policy) {
   posts.forEach((_post, index) => {
     const target = `Evaluate only \`posts[${index}]\`. Base the answer only on fields present in state.`;
     const inspect = `Consider \`posts[${index}].title\` and \`posts[${index}].content\` together. Either may be empty.`;
+    const preserveInspect = `Consider \`posts[${index}].title\`, \`posts[${index}].content\`, and \`posts[${index}].category\` together. Title or content may be empty.`;
     const addSignalQuestion = (key, question) => {
       if (!policy.enabledSignals[key]) return;
       questions[`${SIGNAL_RULES[key].answerPrefix}_${index}`] = {
@@ -321,6 +409,20 @@ function buildQuestions(posts, policy) {
             "Classify the communication pattern, not the topic alone. Do not infer from the author or unseen media."
         },
         criteria: policy.signalDefinitions[key]
+      };
+    };
+    const addPreserveQuestion = (key, question) => {
+      if (!policy.enabledPreserveSignals[key]) return;
+      questions[`${PRESERVE_SIGNAL_RULES[key].answerPrefix}_${index}`] = {
+        type: "noul",
+        instructions: {
+          target,
+          question,
+          inspect: preserveInspect,
+          constraint:
+            "Judge whether the supplied text identifies this kind of sharing. Do not require tutorial-style information, and do not infer unseen image or video details."
+        },
+        criteria: policy.preserveSignalDefinitions[key]
       };
     };
 
@@ -361,6 +463,18 @@ function buildQuestions(posts, policy) {
     addSignalQuestion(
       "engagementBait",
       "Is the post mainly a sensational or low-information tactic to obtain clicks, comments, likes, follows, or guesses?"
+    );
+    addPreserveQuestion(
+      "experienceSharing",
+      "Does the post share a genuine first-hand experience, process, outcome, review, lesson, observation, or personal account?"
+    );
+    addPreserveQuestion(
+      "lifestyleSharing",
+      "Is the post a genuine personal lifestyle or everyday-life sharing?"
+    );
+    addPreserveQuestion(
+      "photographySharing",
+      "Is photography or visual creation itself the central subject or creative output of the post?"
     );
 
     if (policy.blockedTopics.length) {
@@ -430,6 +544,18 @@ function makeModelDecision(item, index, answers, policy) {
   const blocked = policy.blockedTopics.length
     ? readNoul(answers, `blocked_${index}`)
     : 0;
+  const preserveSignals = Object.fromEntries(
+    PRESERVE_SIGNAL_KEYS.map((key) => [
+      key,
+      policy.enabledPreserveSignals[key]
+        ? readNoul(answers, `${PRESERVE_SIGNAL_RULES[key].answerPrefix}_${index}`)
+        : 0
+    ])
+  );
+  const keepReasonCodes = PRESERVE_SIGNAL_KEYS.filter(
+    (key) => preserveSignals[key] >= policy.thresholds[key]
+  ).map((key) => PRESERVE_SIGNAL_RULES[key].reasonCode);
+  const isProtectedSharing = keepReasonCodes.length > 0;
   const hasReliableLowInformationValue =
     contentValue.value <= policy.thresholds.maxContentValueForDrop &&
     contentValue.confidence >= policy.thresholds.minContentValueConfidence;
@@ -441,10 +567,15 @@ function makeModelDecision(item, index, answers, policy) {
   SIGNAL_KEYS.forEach((key) => {
     const rule = SIGNAL_RULES[key];
     if (signals[key] < policy.thresholds[key]) return;
-    if (rule.requiresLowInformationValue && !hasReliableLowInformationValue) return;
+    if (
+      rule.requiresLowInformationValue &&
+      (!hasReliableLowInformationValue || isProtectedSharing)
+    ) {
+      return;
+    }
     reasonCodes.push(rule.reasonCode);
   });
-  if (hasReliableLowInformationValue) {
+  if (hasReliableLowInformationValue && !isProtectedSharing) {
     reasonCodes.push("LOW_INFORMATION_VALUE");
   }
 
@@ -464,8 +595,15 @@ function makeModelDecision(item, index, answers, policy) {
     signals: Object.fromEntries(
       SIGNAL_KEYS.map((key) => [key, Number(signals[key].toFixed(4))])
     ),
+    preserveSignals: Object.fromEntries(
+      PRESERVE_SIGNAL_KEYS.map((key) => [
+        key,
+        Number(preserveSignals[key].toFixed(4))
+      ])
+    ),
     blocked: Number(blocked.toFixed(4)),
-    reasonCodes
+    reasonCodes,
+    keepReasonCodes
   };
 }
 
@@ -480,8 +618,12 @@ function makeRuleDecision(item, reasonCode, overrides = {}) {
     signals: Object.fromEntries(
       SIGNAL_KEYS.map((key) => [key, overrides.signals?.[key] ?? 0])
     ),
+    preserveSignals: Object.fromEntries(
+      PRESERVE_SIGNAL_KEYS.map((key) => [key, 0])
+    ),
     blocked: 0,
-    reasonCodes: [reasonCode]
+    reasonCodes: [reasonCode],
+    keepReasonCodes: []
   };
 }
 
